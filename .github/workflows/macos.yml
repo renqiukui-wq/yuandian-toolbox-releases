@@ -1,0 +1,52 @@
+name: macOS universal build
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['macos/**', '.github/workflows/macos.yml']
+permissions:
+  contents: read
+concurrency:
+  group: macos-release
+  cancel-in-progress: true
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test native draft and media operations
+        run: bash macos/build.sh test
+      - name: Build Universal 2 app
+        run: bash macos/build.sh
+      - uses: actions/upload-artifact@v4
+        if: matrix.runner == 'macos-15'
+        with:
+          name: macos-universal
+          path: macos/outputs/*
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-universal
+          path: release-assets
+      - name: Publish separate Mac preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          TAG=macos-v0.1.0
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release already exists; refusing to replace published binaries. Increment the Mac version for a new release."
+            exit 1
+          fi
+          gh release create "$TAG" release-assets/* --target "$GITHUB_SHA" --title "元点剪辑批量工具箱 · macOS 0.1.0 预览版" --notes-file macos/README.md --prerelease --latest=false
