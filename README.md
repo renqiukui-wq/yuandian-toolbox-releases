@@ -1,8 +1,19 @@
 # 元点剪辑批量工具箱
 
-多草稿、多时间线批量处理工具的开源定制工程。当前应用版本：**v1.0.4**。
+多草稿、多时间线批量处理工具的开源定制工程。Windows 应用版本：**v1.0.4**；另提供独立的 **macOS 0.1.0 预览版**。
 
 **开源范围：** 本仓库公开我们编写的界面扩展、预览服务、素材整理、更新器、单文件启动器及补丁/构建脚本，采用 MIT 许可证。原始 Go/Wails 主程序的完整源码不在本仓库中，完整应用仍依赖使用者自行提供的兼容原始程序及第三方文件。详见 [开源范围与外部依赖](THIRD_PARTY.md)。
+
+## 选择你的系统
+
+| 系统 | 下载 | 范围 |
+| --- | --- | --- |
+| Windows x64 | [Windows 最新版](https://github.com/renqiukui-wq/yuandian-toolbox-releases/releases/latest) · YuandianToolbox.exe | 原有批量导出与定制功能 |
+| macOS 13+，Apple 芯片或 Intel | [Mac 0.1.0 通用版](https://github.com/renqiukui-wq/yuandian-toolbox-releases/releases/tag/macos-v0.1.0) · Universal DMG / ZIP | 草稿预览、可解析草稿素材打包、已导出视频的尺寸与首帧处理 |
+
+Mac 应用完整源码位于 [macos](macos)，使用原生 SwiftUI / AVFoundation，不依赖 Windows 原程序。**Mac 首版尚不支持直接渲染剪映复杂草稿、多时间线或原 Windows 全套混剪功能**；请先在 Mac 剪映导出视频。安装包未使用 Apple Developer ID 公证，首次启动可能需要在系统“隐私与安全性”中允许打开。详见 [Mac 安装、功能范围与构建说明](macos/README.md)。两套更新通道独立，Mac 预发布不会替换 Windows latest。
+
+下文关于原始程序依赖及 EXE 的说明针对 Windows 定制工程。
 
 ## 源码导览
 
