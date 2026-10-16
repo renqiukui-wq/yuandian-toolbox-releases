@@ -26,6 +26,7 @@ cp Info.plist "$APP/Contents/Info.plist"
 cp README.md "$APP/Contents/Resources/使用说明.md"
 codesign --force --sign - "$APP"
 codesign --verify --deep --strict "$APP"
+"$APP/Contents/MacOS/YuandianToolbox" --ui-smoke "$PWD/build/ui-smoke"
 ditto -c -k --sequesterRsrc --keepParent "$APP" outputs/YuandianToolbox-macOS-universal.zip
 mkdir -p build/dmg
 cp -R "$APP" build/dmg/

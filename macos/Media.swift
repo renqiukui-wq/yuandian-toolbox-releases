@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import AVFoundation
 import QuartzCore
+import CoreImage
 
 struct Preview {
     let image: NSImage?
@@ -50,42 +51,31 @@ enum VideoProcessor {
         let (width,height) = mode.dimensions(width: abs(bounds.width), height: abs(bounds.height))
         guard width <= 16384, height <= 16384 else { throw ToolboxError("视频尺寸超出编码器支持范围") }
         let renderSize = CGSize(width: width, height: height)
-        let composition = AVMutableVideoComposition()
-        composition.renderSize = renderSize
         let fps = frameRate > 0 ? Double(frameRate) : 30
-        composition.frameDuration = CMTime(seconds: 1 / fps, preferredTimescale: 60000)
-        let instruction = AVMutableVideoCompositionInstruction()
-        instruction.timeRange = CMTimeRange(start: .zero, duration: duration)
-        instruction.backgroundColor = NSColor.black.cgColor
-        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
-        let scale = min(CGFloat(width) / abs(bounds.width), CGFloat(height) / abs(bounds.height))
-        let normalized = transform.concatenating(CGAffineTransform(translationX: -bounds.minX, y: -bounds.minY))
-        let scaled = normalized.concatenating(CGAffineTransform(scaleX: scale, y: scale))
-        let centered = scaled.concatenating(CGAffineTransform(translationX: (CGFloat(width) - abs(bounds.width) * scale)/2, y: (CGFloat(height) - abs(bounds.height) * scale)/2))
-        layerInstruction.setTransform(centered, at: .zero)
-        instruction.layerInstructions = [layerInstruction]
-        composition.instructions = [instruction]
+        var chosenCover: CIImage?
         if cover == .random {
             let generator = AVAssetImageGenerator(asset: asset)
             generator.appliesPreferredTrackTransform = true
             let time = duration.seconds < 0.2 ? 0 : Double.random(in: 0.1...0.9) * duration.seconds
             let cg = try generator.copyCGImage(at: CMTime(seconds: time, preferredTimescale: 600), actualTime: nil)
-            let parentLayer = CALayer(); parentLayer.frame = CGRect(origin: .zero, size: renderSize)
-            let videoLayer = CALayer(); videoLayer.frame = parentLayer.bounds
-            let coverLayer = CALayer(); coverLayer.frame = parentLayer.bounds
-            coverLayer.contents = cg; coverLayer.contentsGravity = .resizeAspect
-            coverLayer.backgroundColor = NSColor.black.cgColor
-            coverLayer.opacity = 0
-            let animation = CAKeyframeAnimation(keyPath: "opacity")
-            animation.values = [1,1,0]; animation.keyTimes = [0,0.99,1]
-            animation.calculationMode = .discrete
-            animation.beginTime = AVCoreAnimationBeginTimeAtZero
-            animation.duration = 1 / fps
-            animation.fillMode = .forwards; animation.isRemovedOnCompletion = false
-            coverLayer.add(animation, forKey: "first-frame-cover")
-            parentLayer.addSublayer(videoLayer); parentLayer.addSublayer(coverLayer)
-            composition.animationTool = AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: videoLayer, in: parentLayer)
+            chosenCover = CIImage(cgImage: cg)
         }
+        let coverImage = chosenCover
+        let context = CIContext(options: [.useSoftwareRenderer: true])
+        let rectangle = CGRect(origin: .zero, size: renderSize)
+        let composition = AVMutableVideoComposition(asset: asset, applyingCIFiltersWithHandler: { request in
+            // Select by timeline time, not a persistent animation layer. Only frame zero changes.
+            let source = request.compositionTime.seconds < (0.5 / fps) ? (coverImage ?? request.sourceImage) : request.sourceImage
+            let extent = source.extent
+            let normalized = source.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
+            let scale = min(renderSize.width / extent.width, renderSize.height / extent.height)
+            let image = normalized.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+                .transformed(by: CGAffineTransform(translationX: (renderSize.width - extent.width * scale)/2, y: (renderSize.height - extent.height * scale)/2))
+            let background = CIImage(color: CIColor(red:0,green:0,blue:0,alpha:1)).cropped(to: rectangle)
+            request.finish(with: image.composited(over: background).cropped(to: rectangle), context: context)
+        })
+        composition.renderSize = renderSize
+        composition.frameDuration = CMTime(seconds: 1 / fps, preferredTimescale: 60000)
         guard let exporter = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality), exporter.supportedFileTypes.contains(.mp4) else { throw ToolboxError("系统编码器不支持此视频，请先在剪映导出 MP4 或 MOV。") }
         exporter.outputURL = temporary; exporter.outputFileType = .mp4
         exporter.shouldOptimizeForNetworkUse = true; exporter.videoComposition = composition

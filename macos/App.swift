@@ -198,7 +198,33 @@ struct MacRelease: Decodable {
             MainView().environmentObject(model)
                 .preferredColorScheme(appearance == "深色" ? .dark : appearance == "浅色" ? .light : nil)
                 .frame(minWidth:980,minHeight:660)
-                .onAppear { model.restore() }
+                .onAppear {
+                    if let index = CommandLine.arguments.firstIndex(of:"--ui-smoke"), CommandLine.arguments.count > index+1 {
+                        UISmoke.run(model:model,folder:URL(fileURLWithPath:CommandLine.arguments[index+1]))
+                    } else { model.restore() }
+                }
         }.defaultSize(width:1180,height:800)
+    }
+}
+
+@MainActor enum UISmoke {
+    static var started = false
+    static func run(model:AppModel,folder:URL) {
+        guard !started else { return }; started=true
+        try? FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
+        let cases = [("草稿库","浅色","drafts-light"),("视频处理","浅色","video-light"),("检查更新","浅色","update-light"),("草稿库","深色","drafts-dark"),("视频处理","深色","video-dark")]
+        func capture(_ index:Int) {
+            if index == cases.count { print("PASS: native windows rendered in light and dark modes"); NSApplication.shared.terminate(nil); return }
+            let item=cases[index]; model.section=item.0; UserDefaults.standard.set(item.1,forKey:"appearance")
+            DispatchQueue.main.asyncAfter(deadline:.now()+2) {
+                guard let view=NSApplication.shared.windows.first(where:{$0.isVisible && $0.contentView != nil})?.contentView,
+                      let bitmap=view.bitmapImageRepForCachingDisplay(in:view.bounds) else { print("UI render failed"); exit(2) }
+                view.cacheDisplay(in:view.bounds,to:bitmap)
+                guard let bytes=bitmap.representation(using:.png,properties:[:]) else { exit(3) }
+                do { try bytes.write(to:folder.appendingPathComponent(item.2+".png")) } catch { exit(4) }
+                capture(index+1)
+            }
+        }
+        capture(0)
     }
 }

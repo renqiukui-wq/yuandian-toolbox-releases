@@ -110,6 +110,7 @@ func pixel(_ url:URL,seconds:Double) throws -> [UInt8] {
         let normalFirst=try pixel(input,seconds:0); let randomFirst=try pixel(random,seconds:0)
         try expect(abs(Int(normalFirst[0])-Int(randomFirst[0])) > 10,"random cover must change first frame")
         let normalLater=try pixel(input,seconds:1); let randomLater=try pixel(random,seconds:1)
+        print("Cover pixels first=\(normalFirst) random=\(randomFirst) later=\(normalLater) outputLater=\(randomLater)")
         try expect(abs(Int(normalLater[0])-Int(randomLater[0])) < 15,"random cover must not cover subsequent frames")
         let rotated=root.appendingPathComponent("rotated.mov"); try await movie(rotated,rotated:true)
         let rotOut=root.appendingPathComponent("rotated-output"); try fm.createDirectory(at:rotOut,withIntermediateDirectories:true)
