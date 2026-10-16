@@ -15,7 +15,7 @@ for ARCH in arm64 x86_64; do
   xcrun swiftc "${COMMON[@]}" -O -target "$ARCH-apple-macos13.0" Core.swift Media.swift App.swift Views.swift -o "build/yuandian-$ARCH"
 done
 lipo -create build/yuandian-arm64 build/yuandian-x86_64 -output "$APP/Contents/MacOS/YuandianToolbox"
-lipo -verify_arch arm64 x86_64 "$APP/Contents/MacOS/YuandianToolbox"
+lipo "$APP/Contents/MacOS/YuandianToolbox" -verify_arch arm64 x86_64
 for SIZE in 16 32 128 256 512; do
   sips -z "$SIZE" "$SIZE" AppIcon.png --out "build/AppIcon.iconset/icon_${SIZE}x${SIZE}.png" >/dev/null
   DOUBLE=$((SIZE * 2))
