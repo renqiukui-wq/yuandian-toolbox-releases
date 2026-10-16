@@ -1,6 +1,66 @@
 # 元点剪辑批量工具箱
 
-Windows 单文件版，支持多草稿、多时间线批量处理。
+多草稿、多时间线批量处理工具的开源定制工程。当前应用版本：**v1.0.4**。
+
+**开源范围：** 本仓库公开我们编写的界面扩展、预览服务、素材整理、更新器、单文件启动器及补丁/构建脚本，采用 MIT 许可证。原始 Go/Wails 主程序的完整源码不在本仓库中，完整应用仍依赖使用者自行提供的兼容原始程序及第三方文件。详见 [开源范围与外部依赖](THIRD_PARTY.md)。
+
+## 源码导览
+
+| 文件 | 用途 |
+| --- | --- |
+| LocalLauncher.cs | 本地服务与视频尺寸、随机封面处理 |
+| DraftPreview.cs / draft_preview.js | 草稿预览、放大、按需加载和自动刷新 |
+| MaterialCollector.cs | 草稿素材整理与读写桥接 |
+| UpdateService.cs / UpdateInstaller.cs / AutoUpdateWorker.cs | 版本检查、下载校验、替换和重启 |
+| SingleFileBootstrap.cs | 单文件打包程序的解包校验与启动 |
+| local_runtime.js / studio_design.js / studio_theme.css / update_ui.js | 界面、交互与本地服务接入 |
+| patch_frontend.cjs / extract_assets.py / build_binary.py | 原始程序前端提取与补丁 |
+| build.py | 可复现构建入口与源码测试 |
+
+## 获取源码
+
+点击仓库 **Code → Download ZIP**，或使用 Git：
+
+```powershell
+git clone https://github.com/renqiukui-wq/yuandian-toolbox-releases.git
+cd yuandian-toolbox-releases
+```
+
+当前源码位于 main 分支。早期 v1.0.1–v1.0.4 的发布标签是在公开源码之前创建的；要获取这次公开的代码，请下载 main，或克隆后使用 main 分支。
+
+## 构建与验证
+
+环境要求：Windows x64、Python 3.9+、Node.js 18+、.NET Framework 4.x 的 64 位 C# 编译器（csc.exe）。构建脚本只使用 Python 标准库；Acorn 8.15.0 已连同其许可证放入仓库。
+
+不需要原始 EXE 即可检查公开的辅助程序和测试：
+
+```powershell
+python build.py --check
+```
+
+此命令编译公开的 C# 辅助程序，验证草稿封面缓存更新/删除/恢复、导出参数和更新安装等待逻辑；它不会启动剪映，也不会访问个人草稿。
+
+完整打包需要自行提供：
+
+- 原始安装目录，包含“小映批量助手.exe”和 Resources 下的 bravo.exe、f2.exe、ffmpeg.exe、MediaInfo.exe、qcore_ext.dll、uptool.exe。
+- 与原始程序兼容的 jydraft_bridge.dll。
+- 支持的原始 EXE SHA-256：`016012b4a179f428cc90e2b2520c761606bb773c572803abd0fb6f64485785ee`。脚本会拒绝其他二进制版本，避免错误补丁。
+
+```powershell
+python build.py --original-dir "D:\BuildInputs\original" --bridge-dll "D:\BuildInputs\jydraft_bridge.dll"
+```
+
+Node 不在 PATH 时添加 `--node "C:\path\to\node.exe"`。构建中间文件在 `.build`，最终单文件程序在 `outputs\元点剪辑批量工具箱.exe`。输入文件只读；脚本不会替换正在使用的已安装程序。
+
+构建包含前端语法/补丁检查、原始文件哈希及指定修改区验证、打包文件完整性检查。Windows 编译器可能写入不同的构建时间，因此不承诺不同机器生成的 EXE 逐字节一致。
+
+Fork 后请修改 `release_config.json` 中的版本、GitHub 发布仓库和附件名称，避免你的派生版本从本项目更新通道下载更新。
+
+## 贡献与许可证
+
+欢迎通过 Issues 报告问题、通过 Pull Requests 提交改进。提交前运行 `python build.py --check`；涉及原始程序补丁时再执行完整构建。请勿提交个人草稿、素材、凭据或不属于本仓库授权范围的二进制文件。
+
+原创源码采用 [MIT](LICENSE)；Acorn 保留 [自身许可证](LICENSE-ACORN)。MIT 不扩展到原始主程序、剪映及其他外部二进制依赖，也不代表 Releases 中的所有组合内容均采用 MIT。
 
 ## 下载
 

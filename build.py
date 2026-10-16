@@ -1,0 +1,55 @@
+"""Build the open-source customization layer. Never reads a personal draft directory."""
+from pathlib import Path
+import argparse, hashlib, json, os, shutil, subprocess, sys
+ROOT=Path(__file__).resolve().parent
+SOURCES=['LocalLauncher.cs','MaterialCollector.cs','DraftPreview.cs','UpdateService.cs','UpdateInstaller.cs','SingleFileBootstrap.cs','AutoUpdateWorker.cs','local_runtime.js','update_ui.js','studio_design.js','draft_preview.js','studio_theme.css','branded_index.html','patch_frontend.cjs','build_runtime.py','build_binary.py','build_single_file.py','extract_assets.py','verify_build.py','release_config.json','test_cover_frontend.cjs','test_install_frontend.cjs','PreviewSmoke.cs']
+ORIGINAL_SHA256='016012b4a179f428cc90e2b2520c761606bb773c572803abd0fb6f64485785ee'
+RESOURCES=['bravo.exe','f2.exe','ffmpeg.exe','MediaInfo.exe','qcore_ext.dll','uptool.exe']
+def digest(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+def main():
+ parser=argparse.ArgumentParser(description=__doc__)
+ parser.add_argument('--check',action='store_true',help='Compile the open managed helper and run JS unit tests without original binaries')
+ parser.add_argument('--original-dir',type=Path,help='Original compatible installation containing the original EXE and Resources')
+ parser.add_argument('--bridge-dll',type=Path,help='User-supplied compatible jydraft_bridge.dll')
+ parser.add_argument('--node',default='node',help='Node executable name or absolute path')
+ args=parser.parse_args()
+ if os.name!='nt':parser.error('Windows x64 and .NET Framework 4.x compiler are required')
+ node=shutil.which(args.node)
+ if not node:parser.error('Node.js was not found. Install it or pass --node PATH')
+ if not args.check:
+  if not args.original_dir or not args.bridge_dll:parser.error('Full build requires --original-dir and --bridge-dll')
+  original=args.original_dir.resolve()/'小映批量助手.exe'
+  if not original.is_file() or digest(original)!=ORIGINAL_SHA256:parser.error('Unsupported original EXE: expected SHA-256 '+ORIGINAL_SHA256)
+  for name in RESOURCES:
+   if not (args.original_dir/'Resources'/name).is_file():parser.error('Missing supplied resource: '+name)
+  if not args.bridge_dll.is_file():parser.error('Missing supplied bridge DLL')
+ stage=ROOT/'.build';work=stage/'work';work.mkdir(parents=True,exist_ok=True)
+ for name in SOURCES:shutil.copy2(ROOT/name,work/name)
+ (work/'acorn').mkdir(exist_ok=True)
+ shutil.copy2(ROOT/'acorn.js',work/'acorn/acorn.js');shutil.copy2(ROOT/'LICENSE-ACORN',work/'acorn/LICENSE')
+ payload=work/'build_inputs/runtime_payload';payload.mkdir(parents=True,exist_ok=True)
+ (stage/'outputs').mkdir(exist_ok=True)
+ def run(command):subprocess.run(command,cwd=stage,check=True,creationflags=subprocess.CREATE_NO_WINDOW)
+ run([node,'work/test_cover_frontend.cjs']);run([node,'work/test_install_frontend.cjs'])
+ run([sys.executable,'work/build_runtime.py'])
+ csc=str(Path(os.environ.get('WINDIR','C:/Windows'))/'Microsoft.NET/Framework64/v4.0.30319/csc.exe')
+ probe=stage/'PreviewSmoke.exe'
+ run([csc,'/nologo','/codepage:65001','/target:exe','/platform:x64','/reference:System.Drawing.dll','/reference:System.Web.Extensions.dll','/out:'+str(probe)]+[str(work/n) for n in ['PreviewSmoke.cs','DraftPreview.cs','MaterialCollector.cs']])
+ run([str(probe)])
+ if args.check:
+  print('PASS: managed helper compiled; cover and update tests passed. Original editor integration was not built.');return
+ target=work/'build_inputs/original_installation';target.mkdir(parents=True,exist_ok=True);shutil.copy2(original,target/original.name)
+ resources=payload/'Resources/Core/Resources';resources.mkdir(parents=True,exist_ok=True)
+ expected=set(RESOURCES+['jydraft_bridge.dll'])
+ extras=[p.name for p in resources.iterdir() if p.name not in expected]
+ if extras:raise RuntimeError('Unexpected staging files; use a fresh checkout: '+repr(extras))
+ for name in RESOURCES:shutil.copy2(args.original_dir/'Resources'/name,resources/name)
+ shutil.copy2(args.bridge_dll,resources/'jydraft_bridge.dll')
+ run([sys.executable,'work/extract_assets.py']);run([node,'work/patch_frontend.cjs']);run([sys.executable,'work/build_binary.py']);run([sys.executable,'work/verify_build.py']);run([sys.executable,'work/build_single_file.py'])
+ package=stage/'outputs/元点剪辑批量工具箱.exe'
+ run([str(package),'--verify-package',str(work/'package-verification.json')])
+ if digest(original)!=ORIGINAL_SHA256:raise RuntimeError('Original input changed during build')
+ output=ROOT/'outputs';output.mkdir(exist_ok=True);shutil.copy2(package,output/package.name)
+ print(json.dumps({'output':str(output/package.name),'sha256':digest(package),'original_input_unchanged':True},ensure_ascii=False,indent=2))
+if __name__=='__main__':
+ sys.stdout.reconfigure(encoding='utf-8');main()

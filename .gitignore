@@ -1,0 +1,11 @@
+.build/
+outputs/
+inputs/
+node_modules/
+__pycache__/
+*.pyc
+*.exe
+*.dll
+*.zip
+*.log
+.env
