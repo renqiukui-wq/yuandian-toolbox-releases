@@ -56,6 +56,8 @@ enum VideoProcessor {
         if cover == .random {
             let generator = AVAssetImageGenerator(asset: asset)
             generator.appliesPreferredTrackTransform = true
+            generator.requestedTimeToleranceBefore = .zero
+            generator.requestedTimeToleranceAfter = .zero
             let time = duration.seconds < 0.2 ? 0 : Double.random(in: 0.1...0.9) * duration.seconds
             let cg = try generator.copyCGImage(at: CMTime(seconds: time, preferredTimescale: 600), actualTime: nil)
             chosenCover = CIImage(cgImage: cg)

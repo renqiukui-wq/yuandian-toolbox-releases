@@ -183,7 +183,7 @@ struct MacRelease: Decodable {
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if AppModel.shared.busy || AppModel.shared.downloading {
-            let alert = NSAlert(); alert.messageText = "任务仍在进行"; alert.informativeText = "请先等待任务完成，或取消处理后再退出。"; alert.runModal(); return .cancel
+            let alert = NSAlert(); alert.messageText = "任务仍在进行"; alert.informativeText = "请先等待任务完成，或取消处理后再退出。"; alert.runModal(); return .terminateCancel
         }
         return .terminateNow
     }
