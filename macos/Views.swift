@@ -5,7 +5,7 @@ private let accent = Color(red:0.05,green:0.62,blue:0.55)
 struct Surface<Content:View>: View {
     let content: Content
     init(@ViewBuilder content: () -> Content) { self.content = content() }
-    var body: some View { content.padding(22).frame(maxWidth:.infinity,alignment:.leading).background(Color(nsColor:.controlBackgroundColor)).clipShape(RoundedRectangle(cornerRadius:18)).overlay(RoundedRectangle(cornerRadius:18).stroke(Color.primary.opacity(0.07))) }
+    var body: some View { VStack(alignment:.leading,spacing:10) { content }.padding(22).frame(maxWidth:.infinity,alignment:.leading).background(Color(nsColor:.controlBackgroundColor)).clipShape(RoundedRectangle(cornerRadius:18)).overlay(RoundedRectangle(cornerRadius:18).stroke(Color.primary.opacity(0.07))) }
 }
 struct MainView: View {
     @EnvironmentObject var model: AppModel
