@@ -1,3 +1,4 @@
+function XYLocal_sizeMode(mode){return ["original","auto720","auto1080","auto1440","auto2160"].includes(mode)?mode:["landscape","portrait"].includes(mode)?"auto720":"original";}
 const XYLocal_token="xy-local-20261015-fd32b7ca938c4e0ea704";
 let XYLocal_job=null;
 function XYLocal_status(){
@@ -16,12 +17,14 @@ const XYLocal_ControlComponent={props:["params","h"],data(){return{pending:false
 function XYLocal_control(params,l,createVNode){return createVNode(XYLocal_ControlComponent,{params,h:l});}
 function XYLocal_controlBody(params,h,pending){
  const count=params.selectedDrafts?.length||0,busy=!!params.collectBusy||!!params.timelineLoading||pending,mode=params.sizeMode||"original";
- const options=[["original","保持原尺寸","沿用草稿设置"],["auto720","自动 720P · 推荐","逐条跟随横竖方向"],["landscape","720P 横屏 1280×720","横向画面 · 16:9"],["portrait","720P 竖屏 720×1280","竖向画面 · 9:16"]];
+ const options=[["original","保持原尺寸","沿用草稿设置"],["auto720","自动 720P","短边 720 · 跟随横竖方向"],["auto1080","自动 1080P","短边 1080 · 跟随横竖方向"],["auto1440","自动 2K","短边 1440 · 常见比例 2560×1440"],["auto2160","自动 4K","短边 2160 · 常见比例 3840×2160"]];
  const message=params.timelineLoading?"正在读取所选草稿的时间线…":params.collectMessage||(count?"已选 "+count+" 个草稿，文件名沿用对应时间线。":"先选择要处理的草稿，再设置输出方式。");
  return h("section",{class:"xy-export-panel","aria-label":"导出设置"},[
-  h("div",{class:"xy-panel-top"},[h("div",null,[h("h2",{class:"xy-panel-title"},"导出设置"),h("p",{class:"xy-panel-subtitle"},"混合横竖时间线，选自动；统一交付规格，选固定横屏或竖屏。")]),h("span",{class:"xy-count-badge"},count?"已选 "+count+" 个草稿":"等待选择草稿")]),
+  h("div",{class:"xy-panel-top"},[h("div",null,[h("h2",{class:"xy-panel-title"},"导出设置"),h("p",{class:"xy-panel-subtitle"},"每条视频自动识别横竖与比例；尺寸一致时跳过尺寸转换。")]),h("span",{class:"xy-count-badge"},count?"已选 "+count+" 个草稿":"等待选择草稿")]),
   h("div",{class:"xy-size-options",role:"radiogroup","aria-label":"导出尺寸"},options.map(([value,title,sub])=>h("button",{type:"button",role:"radio",class:"xy-size-option","aria-label":title,"aria-checked":mode===value,tabindex:mode===value?0:-1,disabled:busy,onClick:()=>{params.sizeMode=value;localStorage.setItem("xy-size-mode",value)},onKeydown:e=>{if(!["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(e.key))return;e.preventDefault();const delta=["ArrowLeft","ArrowUp"].includes(e.key)?-1:1,next=options[(options.findIndex(x=>x[0]===mode)+delta+options.length)%options.length][0];params.sizeMode=next;localStorage.setItem("xy-size-mode",next);e.currentTarget.parentElement.querySelector('[aria-label="'+options.find(x=>x[0]===next)[1]+'"]').focus();}},[h("span",{class:"xy-size-icon "+value,"aria-hidden":"true"}),h("span",null,[h("strong",null,title),h("small",null,sub)])]))),
-  h("div",{class:"xy-mode-note"},mode==="original"?(params.setCover==="random"?"保持每条视频原尺寸，生成随机首帧与内嵌封面。请先选择自定义保存路径。":"保留每条时间线导出后的原尺寸，不进行二次转码。"):mode==="auto720"?"按每个导出视频的画面比例分别处理：16:9 → 1280×720，9:16 → 720×1280；其他比例短边 720、等比缩放，不裁切、不补边。请先选择自定义保存路径；完成后只保留最终视频。":"固定为所选横屏或竖屏尺寸；方向不一致的视频会等比缩放并补黑边。请在下方选择自定义保存路径；完成后只保留最终视频。"),
+  h("div",{class:"xy-mode-note"},mode==="original"?(params.setCover==="random"?"保持原尺寸并生成随机封面；封面处理仍需编码。":"保留原尺寸，不进行尺寸转码。") : "逐条按比例缩放，不裁切、不补边；输出尺寸已经匹配时直接交付，跳过尺寸转码。随机封面仍需处理。请选择自定义保存路径，完成后只保留最终视频。"),
+  h("label",{class:"xy-check-label",style:{marginBottom:"14px"}},[h("input",{type:"checkbox",checked:!!params.removeSilence,disabled:busy,onChange:e=>{params.removeSilence=e.target.checked;localStorage.setItem("xy-remove-silence",String(e.target.checked))}}),"导出后删除静音并自动排齐（逐条视频检测）"]),
+  params.removeSilence?h("p",{class:"xy-mode-note"},"采用 -40 dB / 0.5 秒检测，切口两侧各保留 80 毫秒；首音轨无声超过 80% 时停止该文件，避免误删。需要自定义保存路径。无需删除的文件直接进入尺寸判断。"):null,
   h("div",{class:"xy-material-row"},[h("label",{class:"xy-check-label"},[h("input",{type:"checkbox",checked:!!params.collectMaterials,disabled:busy,onChange:e=>{params.collectMaterials=e.target.checked;localStorage.setItem("xy-copy-materials",String(e.target.checked))}}),"导出前复制全部素材到草稿"]),h("div",{class:"xy-button-row"},[h("button",{type:"button",class:"xy-btn",disabled:busy||!count,onClick:()=>{XYLocal_collect(params).catch(()=>{})}},params.collectBusy?[h("span",{class:"xy-spinner","aria-hidden":"true"}),"正在复制素材"]:"立即复制所选草稿素材"),h("button",{type:"button",class:"xy-btn primary",disabled:busy||!count,onClick:XYDesign_startExport},pending?[h("span",{class:"xy-spinner","aria-hidden":"true"}),"正在准备"]:"开始导出")])]),
   h("div",{class:"xy-status "+(params.collectError?"error":params.collectMessage&&!params.collectBusy?"success":""),role:"status","aria-live":"polite"},[h("span",{class:params.collectBusy?"xy-spinner":"xy-status-dot","aria-hidden":"true"}),h("span",null,message)]),
   h("details",{class:"xy-material-help"},[h("summary",null,"素材整理与备份说明"),h("p",null,"复制前，请先在剪映中保存并关闭所选草稿。程序会整理所有时间线的外部素材，校验文件并保留原配置备份；遇到缺失素材会提示具体位置。")])
@@ -37,6 +40,7 @@ async function XYLocal_collect(params){
  }catch(e){params.collectError=true;params.collectMessage=e.message;throw e;}finally{params.collectBusy=false;}
 }
 async function XYLocal_startCore(method,params){
+ if(typeof XYBreath!=="undefined"&&XYBreath.busy)throw Error("批量删气口正在进行，请等待完成。");
  if(XYLocal_job)throw Error("上一次尺寸处理尚未完成，请等待后再启动。");
  if(params.collectBusy)throw Error("请等待素材复制完成后再导出。");
  if(params.collectMaterials)await XYLocal_collect(params);
@@ -52,11 +56,11 @@ async function XYLocal_startCore(method,params){
   params={...params,nameVideo:"yes",namePrefix:pairs.join(":")};
  }
  const mode=params.sizeMode||"original",coverMode=params.setCover==="random"?"random":"first";
- if(mode!=="original"||coverMode==="random"){
-  if(!["original","auto720","landscape","portrait"].includes(mode))throw Error("请选择有效的导出尺寸。");
+ if(mode!=="original"||coverMode==="random"||params.removeSilence){
+  if(!["original","auto720","auto1080","auto1440","auto2160"].includes(mode))throw Error("请选择有效的导出尺寸。");
   if(!params.exportPath)throw Error("选择尺寸处理或随机封面时，请先选择自定义保存路径。");
   if(params.shutdown==="yes")throw Error("视频处理完成前不能自动关机，请关闭自动关机后导出。");
-  XYLocal_job=await XYLocal_api("begin",{mode,coverMode,names:outputNames,folder:params.exportPath});
+  XYLocal_job=await XYLocal_api("begin",{mode,coverMode,removeSilence:!!params.removeSilence,names:outputNames,folder:params.exportPath});
   params={...params,exportPath:XYLocal_job.folder,setCover:coverMode==="random"?"no":params.setCover};
  }
  try{const result=await window.go.main.App[method](params);if(result===false)throw Error("导出任务未启动，请检查草稿和导出设置。");return result}

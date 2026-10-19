@@ -2,7 +2,7 @@
 from pathlib import Path
 import argparse, hashlib, json, os, shutil, subprocess, sys
 ROOT=Path(__file__).resolve().parent
-SOURCES=['LocalLauncher.cs','MaterialCollector.cs','DraftPreview.cs','UpdateService.cs','UpdateInstaller.cs','SingleFileBootstrap.cs','AutoUpdateWorker.cs','local_runtime.js','update_ui.js','studio_design.js','draft_preview.js','studio_theme.css','branded_index.html','patch_frontend.cjs','build_runtime.py','build_binary.py','build_single_file.py','extract_assets.py','verify_build.py','release_config.json','test_cover_frontend.cjs','test_install_frontend.cjs','PreviewSmoke.cs']
+SOURCES=['LocalLauncher.cs','SilenceProcessor.cs','breath_tools.js','test_export_policies.cjs','ExportSmoke.cs','MaterialCollector.cs','DraftPreview.cs','UpdateService.cs','UpdateInstaller.cs','SingleFileBootstrap.cs','AutoUpdateWorker.cs','local_runtime.js','update_ui.js','studio_design.js','draft_preview.js','studio_theme.css','branded_index.html','patch_frontend.cjs','build_runtime.py','build_binary.py','build_single_file.py','extract_assets.py','verify_build.py','release_config.json','test_cover_frontend.cjs','test_install_frontend.cjs','PreviewSmoke.cs']
 ORIGINAL_SHA256='016012b4a179f428cc90e2b2520c761606bb773c572803abd0fb6f64485785ee'
 RESOURCES=['bravo.exe','f2.exe','ffmpeg.exe','MediaInfo.exe','qcore_ext.dll','uptool.exe']
 def digest(p):return hashlib.sha256(p.read_bytes()).hexdigest()
@@ -29,13 +29,19 @@ def main():
  shutil.copy2(ROOT/'acorn.js',work/'acorn/acorn.js');shutil.copy2(ROOT/'LICENSE-ACORN',work/'acorn/LICENSE')
  payload=work/'build_inputs/runtime_payload';payload.mkdir(parents=True,exist_ok=True)
  (stage/'outputs').mkdir(exist_ok=True)
- def run(command):subprocess.run(command,cwd=stage,check=True,creationflags=subprocess.CREATE_NO_WINDOW)
- run([node,'work/test_cover_frontend.cjs']);run([node,'work/test_install_frontend.cjs'])
+ def run(command):
+  result=subprocess.run(command,cwd=stage,capture_output=True,creationflags=subprocess.CREATE_NO_WINDOW)
+  print(result.stdout.decode("utf-8",errors="replace"),end="");print(result.stderr.decode("utf-8",errors="replace"),end="")
+  result.check_returncode()
+ run([node,'work/test_export_policies.cjs']);run([node,'work/test_cover_frontend.cjs']);run([node,'work/test_install_frontend.cjs'])
  run([sys.executable,'work/build_runtime.py'])
  csc=str(Path(os.environ.get('WINDIR','C:/Windows'))/'Microsoft.NET/Framework64/v4.0.30319/csc.exe')
  probe=stage/'PreviewSmoke.exe'
  run([csc,'/nologo','/codepage:65001','/target:exe','/platform:x64','/reference:System.Drawing.dll','/reference:System.Web.Extensions.dll','/out:'+str(probe)]+[str(work/n) for n in ['PreviewSmoke.cs','DraftPreview.cs','MaterialCollector.cs']])
  run([str(probe)])
+ exportprobe=stage/'ExportSmoke.exe'
+ run([csc,'/nologo','/codepage:65001','/target:exe','/platform:x64','/main:ExportSmoke','/reference:System.Drawing.dll','/reference:System.Windows.Forms.dll','/reference:System.Web.Extensions.dll','/out:'+str(exportprobe)]+[str(work/n) for n in ['ExportSmoke.cs','LocalLauncher.cs','SilenceProcessor.cs','MaterialCollector.cs','DraftPreview.cs','UpdateService.cs','UpdateInstaller.cs','ReleaseSettings.cs']])
+ run([str(exportprobe)])
  if args.check:
   print('PASS: managed helper compiled; cover and update tests passed. Original editor integration was not built.');return
  target=work/'build_inputs/original_installation';target.mkdir(parents=True,exist_ok=True);shutil.copy2(original,target/original.name)

@@ -26,6 +26,7 @@ class LocalLauncher {
     class Job {
         public string id, folder, outputFolder, mode, coverMode, state = "waiting", error = "";
         public int total, completed;
+        public bool removeSilence;
         public Dictionary<string,string> before;
         public HashSet<string> expected;
     }
@@ -63,9 +64,9 @@ class LocalLauncher {
     }
     static object State(Job j) { return new { id=j.id, folder=j.folder, outputFolder=j.outputFolder, state=j.state, error=j.error, total=j.total, completed=j.completed }; }
     static string Arg(string s) { return "\"" + s.Replace("\"", "\\\"") + "\""; }
-    static string RunTool(string executable,string arguments) {
+    static string RunTool(string executable,string arguments,bool diagnostics=false) {
         var start=new ProcessStartInfo(Path.Combine(RuntimeResources,executable)){Arguments=arguments,WorkingDirectory=Root,UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8};
-        using(var p=Process.Start(start)) {var errors=new StringBuilder();p.ErrorDataReceived+=(s,e)=>{if(e.Data!=null)lock(errors)errors.AppendLine(e.Data);};p.BeginErrorReadLine();try{p.PriorityClass=ProcessPriorityClass.BelowNormal;}catch{}string output=p.StandardOutput.ReadToEnd();p.WaitForExit();if(p.ExitCode!=0)throw new Exception(executable+"："+errors.ToString());return output;}
+        using(var p=Process.Start(start)) {var errors=new StringBuilder();p.ErrorDataReceived+=(s,e)=>{if(e.Data!=null)lock(errors)errors.AppendLine(e.Data);};p.BeginErrorReadLine();try{p.PriorityClass=ProcessPriorityClass.BelowNormal;}catch{}string output=p.StandardOutput.ReadToEnd();p.WaitForExit();if(p.ExitCode!=0)throw new Exception(executable+"："+errors.ToString());return diagnostics?output+errors.ToString():output;}
     }
     static double VideoDuration(string input) {
         var data=Json().Deserialize<Dictionary<string,object>>(RunTool("MediaInfo.exe","--Output=JSON "+Arg(input)));
@@ -78,41 +79,73 @@ class LocalLauncher {
         double fraction=BitConverter.ToUInt32(bytes,0)/(double)UInt32.MaxValue;
         return duration<0.2?0:duration*(0.1+fraction*0.8);
     }
+    internal sealed class VideoSpec { public int width,height; public double dar,rotation,sar=1,duration;public bool audio; }
+    internal static int ShortEdge(string mode) { switch(mode) { case "auto720":return 720;case "auto1080":return 1080;case "auto1440":return 1440;case "auto2160":return 2160;default:return 0; } }
+    static double Number(Dictionary<string,object> value,string key,double fallback) { double result;return value.ContainsKey(key)&&Double.TryParse(Convert.ToString(value[key],CultureInfo.InvariantCulture),NumberStyles.Float,CultureInfo.InvariantCulture,out result)&&!Double.IsNaN(result)&&!Double.IsInfinity(result)?result:fallback; }
+    static VideoSpec ProbeVideo(string input) {
+        var data=Json().Deserialize<Dictionary<string,object>>(RunTool("MediaInfo.exe","--Output=JSON "+Arg(input)));
+        var media=(Dictionary<string,object>)data["media"];
+        foreach(Dictionary<string,object> track in (System.Collections.IEnumerable)media["track"])if(Convert.ToString(track["@type"])=="Video") {
+            var spec=new VideoSpec{width=(int)Number(track,"Width",0),height=(int)Number(track,"Height",0),rotation=Number(track,"Rotation",0),sar=Number(track,"PixelAspectRatio",1),duration=Number(track,"Duration",0)};
+            if(spec.width<=0||spec.height<=0)throw new Exception("无法读取视频尺寸："+Path.GetFileName(input));
+            spec.dar=spec.width*spec.sar/spec.height;
+            if(Math.Abs(spec.rotation%180)>45&&Math.Abs(spec.rotation%180)<135)spec.dar=1/spec.dar;
+            if(spec.dar<=0)throw new Exception("视频比例无效");foreach(Dictionary<string,object> other in (System.Collections.IEnumerable)media["track"])if(Convert.ToString(other["@type"])=="Audio")spec.audio=true;return spec;
+        } throw new Exception("没有视频轨道");
+    }
+    internal static int[] TargetSize(VideoSpec spec,string mode) {
+        int edge=ShortEdge(mode);if(edge==0)return new[]{spec.width,spec.height};
+        double width=spec.dar>=1?edge*spec.dar:edge,height=spec.dar>=1?edge:edge/spec.dar;
+        if(width>16384||height>16384)throw new Exception("目标尺寸超出编码范围");
+        return new[]{Math.Max(2,(int)Math.Round(width/2,MidpointRounding.AwayFromZero)*2),Math.Max(2,(int)Math.Round(height/2,MidpointRounding.AwayFromZero)*2)};
+    }
+    internal static bool NeedsResize(VideoSpec spec,string mode) {
+        if(mode=="original")return false;var target=TargetSize(spec,mode);
+        return spec.width!=target[0]||spec.height!=target[1]||Math.Abs(spec.sar-1)>.0001||Math.Abs(spec.rotation%360)>.01;
+    }
     static void ConvertJob(Job j) {
         try {
             var after=Scan(j.folder);var targets=new List<string>();
             foreach(var f in after)if((j.expected.Count==0||j.expected.Contains(Path.GetFileNameWithoutExtension(f.Key)))&&(!j.before.ContainsKey(f.Key)||j.before[f.Key]!=f.Value))targets.Add(f.Key);
             if(targets.Count==0)throw new Exception("没有找到本次导出的视频。");
-            lock(Gate)j.total=targets.Count;
-            string size=j.mode=="landscape"?"1280:720":"720:1280";
-            string filter="scale="+size+":force_original_aspect_ratio=decrease:force_divisible_by=2,pad="+size+":(ow-iw)/2:(oh-ih)/2:color=black,setsar=1";
-            if(j.mode=="auto720")filter="scale=w='if(gte(dar,1),max(2,round(720*dar/2)*2),720)':h='if(gte(dar,1),720,max(2,round(720/dar/2)*2))',setsar=1";
-            if(j.mode=="original")filter="null";
+            lock(Gate)j.total=targets.Count;var errors=new List<string>();
             foreach(string input in targets) {
                 string extension=Path.GetExtension(input).ToLowerInvariant();string temporary=Path.Combine(j.folder,".xy-size-"+Guid.NewGuid().ToString("N")+extension);string cover=Path.Combine(j.folder,".xy-cover-"+Guid.NewGuid().ToString("N")+".jpg");
                 try {
                     string output=Path.Combine(j.outputFolder,Path.GetFileName(input));if(File.Exists(output))throw new Exception("保存位置已有同名视频，请重命名或更换文件夹："+Path.GetFileName(input));
+                    var spec=ProbeVideo(input);var dimensions=TargetSize(spec,j.mode);
+                    bool resize=NeedsResize(spec,j.mode);
+                    var keep=new List<SilenceProcessor.Range>{new SilenceProcessor.Range(0,spec.duration)};bool cut=false;
+                    if(j.removeSilence&&spec.audio){var detected=RunTool("ffmpeg.exe","-hide_banner -nostdin -i "+Arg(input)+" -map 0:a:0 -af silencedetect=noise=-40dB:d=0.5 -vn -sn -f null -",true);var cuts=SilenceProcessor.Parse(detected,spec.duration,.08);cut=cuts.Count>0;if(cut)keep=SilenceProcessor.Keep(cuts,spec.duration);}
+                    double expectedDuration=cut?SilenceProcessor.Duration(keep):spec.duration;
+                    if(!resize&&!cut&&j.coverMode!="random") { File.Move(input,output);lock(Gate)j.completed++;continue; }
+                    string filter=resize?"scale="+dimensions[0]+":"+dimensions[1]+",setsar=1":"null";
                     string arguments="-hide_banner -loglevel error -nostdin -y -i "+Arg(input);
+                    string graph=cut?SilenceProcessor.Filter(keep,filter,spec.audio):"[0:v:0]"+filter+"[base]";
                     if(j.coverMode=="random") {
                         if(extension!=".mp4"&&extension!=".mov"&&extension!=".m4v")throw new Exception("随机封面需要 MP4 或 MOV 格式。");
-                        double time=RandomCoverTime(VideoDuration(input));
+                        double offset=RandomCoverTime(expectedDuration),time=offset;
+                        if(cut){foreach(var range in keep){if(offset<=range.end-range.start){time=range.start+offset;break;}offset-=range.end-range.start;}}
                         RunTool("ffmpeg.exe","-hide_banner -loglevel error -nostdin -y -ss "+time.ToString("0.######",CultureInfo.InvariantCulture)+" -i "+Arg(input)+" -map 0:v:0 -vf "+Arg(filter)+" -frames:v 1 -q:v 2 -threads 2 "+Arg(cover));
                         if(!File.Exists(cover)||new FileInfo(cover).Length==0)throw new Exception("随机封面抽取失败："+Path.GetFileName(input));
-                        // Replace exactly the first visual frame and embed the same image as MP4 cover art.
-                        // The timeline length and audio stream remain unchanged.
-                        arguments+=" -i "+Arg(cover)+" -filter_complex "+Arg("[0:v:0]"+filter+"[base];[base][1:v:0]overlay=0:0:enable='eq(n,0)':eof_action=repeat[v]")+" -map [v] -map 0:a? -map 1:v:0 -c:v:1 copy -disposition:v:1 attached_pic";
-                    } else arguments+=" -map 0:v:0 -map 0:a? -vf "+Arg(filter);
-                    arguments+=" -map_metadata 0 -c:v:0 libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -threads 2 -c:a copy";
-                    if(extension==".mp4"||extension==".mov"||extension==".m4v")arguments+=" -movflags +faststart";
-                    RunTool("ffmpeg.exe",arguments+" "+Arg(temporary));
+                        arguments+=" -i "+Arg(cover);graph+=";[base][1:v:0]overlay=0:0:enable='eq(n,0)':eof_action=repeat[v]";
+                    }else graph+=";[base]null[v]";
+                    string script=temporary+".filter";File.WriteAllText(script,graph,new UTF8Encoding(false));
+                    try{
+                        arguments+=" -filter_complex_script "+Arg(script)+" -map [v] "+(cut&&spec.audio?"-map [audio]":"-map 0:a?");
+                        if(j.coverMode=="random")arguments+=" -map 1:v:0 -c:v:1 copy -disposition:v:1 attached_pic";
+                        arguments+=" -map_metadata 0 -c:v:0 libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -threads 2 "+(cut?"-c:a aac -b:a 192k":"-c:a copy");
+                        if(extension==".mp4"||extension==".mov"||extension==".m4v")arguments+=" -movflags +faststart";
+                        RunTool("ffmpeg.exe",arguments+" "+Arg(temporary));
+                    }finally{if(File.Exists(script))File.Delete(script);}
                     if(!File.Exists(temporary)||new FileInfo(temporary).Length==0)throw new Exception("未生成有效视频："+Path.GetFileName(input));
                     // Validate before publishing. File.Move refuses to overwrite a file created meanwhile.
-                    VideoDuration(temporary);File.Move(temporary,output);File.Delete(input);
+                    var verified=ProbeVideo(temporary); if(spec.audio&&!verified.audio)throw new Exception("输出音轨校验失败"); if(spec.duration>0&&Math.Abs(verified.duration-expectedDuration)>0.25)throw new Exception("输出时长校验失败"); if(resize&&(verified.width!=dimensions[0]||verified.height!=dimensions[1]))throw new Exception("输出尺寸校验失败");File.Move(temporary,output);File.Delete(input);
                     lock(Gate)j.completed++;
-                }finally{if(File.Exists(temporary))File.Delete(temporary);if(File.Exists(cover))File.Delete(cover);}
+                }catch(Exception e){errors.Add(Path.GetFileName(input)+"："+e.Message);}finally{if(File.Exists(temporary))File.Delete(temporary);if(File.Exists(cover))File.Delete(cover);}
             }
             if(Directory.GetFileSystemEntries(j.folder).Length==0)Directory.Delete(j.folder);
-            lock(Gate)j.state="completed";
+            lock(Gate){j.state=errors.Count==0?"completed":"failed";if(errors.Count>0)j.error="已完成 "+j.completed+" / "+j.total+" 个视频。未完成："+String.Join("；",errors.ToArray())+"。未完成文件保留在："+j.folder;}
         }catch(Exception e){lock(Gate){j.state="failed";j.error=e.Message+" 本次未完成文件保留在："+j.folder;}}
         SaveStatus(j);
     }
@@ -138,7 +171,7 @@ class LocalLauncher {
             if (url == "/begin") {
                 foreach (Job old in Jobs.Values) if (old.state == "waiting" || old.state == "processing") throw new Exception("已有导出或尺寸处理任务正在运行，请完成后再开始。");
                 string mode = Convert.ToString(body["mode"]);
-                if (mode != "original" && mode != "auto720" && mode != "landscape" && mode != "portrait") throw new Exception("不支持的尺寸选项");
+                if (mode != "original" && ShortEdge(mode)==0) throw new Exception("不支持的尺寸选项");
                 string folder = Path.GetFullPath(Convert.ToString(body["folder"]));
                 if (!Directory.Exists(folder)) throw new Exception("导出文件夹不存在，请先选择有效的自定义导出目录。");
                 string idNew=Guid.NewGuid().ToString("N");
@@ -149,7 +182,7 @@ class LocalLauncher {
                 if(body.ContainsKey("names")){var names=body["names"] as System.Collections.IEnumerable;if(names!=null)foreach(object n in names)expected.Add(Convert.ToString(n));}
                 foreach(string file in Directory.GetFiles(folder))if(IsVideo(file)&&expected.Contains(Path.GetFileNameWithoutExtension(file)))throw new Exception("保存位置已有同名视频，请重命名或更换文件夹："+Path.GetFileName(file));
                 Directory.CreateDirectory(taskFolder);File.SetAttributes(taskFolder,File.GetAttributes(taskFolder)|FileAttributes.Hidden);
-                Job j=new Job{id=idNew,folder=taskFolder,outputFolder=folder,mode=mode,coverMode=coverMode,before=Scan(taskFolder),expected=expected};
+                Job j=new Job{id=idNew,folder=taskFolder,outputFolder=folder,mode=mode,coverMode=coverMode,before=Scan(taskFolder),expected=expected,removeSilence=body.ContainsKey("removeSilence")&&Convert.ToBoolean(body["removeSilence"])};
                 if (body.ContainsKey("names")) { var names = body["names"] as System.Collections.ArrayList; if(names != null) foreach(object n in names) j.expected.Add(Convert.ToString(n)); }
                 Jobs[j.id] = j; SaveStatus(j); return State(j);
             }

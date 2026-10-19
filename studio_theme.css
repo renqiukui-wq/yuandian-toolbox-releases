@@ -128,3 +128,5 @@ html[data-xy-theme] .draftCart .name{display:block!important;flex:1 1 auto!impor
 html[data-xy-theme] .draftCart .checkbox-top{align-self:center!important}html[data-xy-theme] .draftCart .draftInfo{text-align:left!important}
 
 html[data-xy-theme] .draftCart .checkbox-top{left:auto!important;top:auto!important;right:auto!important;bottom:auto!important}
+
+.xy-breath-batch{margin-top:16px;padding-top:16px;border-top:1px solid var(--xy-border)}.xy-breath-drafts{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;max-height:240px;overflow:auto;margin-top:12px;padding:8px}.xy-breath-search,.xy-breath-batch select{color:var(--xy-text);background:var(--xy-surface);border:1px solid var(--xy-border);padding:9px 12px;border-radius:8px}.xy-breath-results{max-height:240px;overflow:auto;overflow-wrap:anywhere}.xy-breath-results p{margin:8px 0}.xy-size-icon.auto1080,.xy-size-icon.auto1440,.xy-size-icon.auto2160{border:2px dashed currentColor;width:28px;height:20px;border-radius:4px}

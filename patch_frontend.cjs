@@ -38,6 +38,7 @@ wrap('la','return Promise.resolve({name:"本地功能",details:"本地版：全�
 wrap('CA','return XYLocal_start("BatchExportDraft",e);');
 wrap('EA','return XYLocal_start("BatchExportMultiTimeline",e);');
 wrap('Hf','return XYLocal_progress();');
+wrap('dB','if(XYBreath.busy||XYLocal_job)return Promise.reject(new Error("已有处理任务，请等待完成。"));XYBreath.busy=true;return window.go.main.App.RemoveBreath(e).finally(()=>{XYBreath.busy=false});');
 wrap('gA','return Promise.reject(new Error("用户反馈功能已移除。"));');
 const advice=components.AdvicePage;
 add(advice.start,advice.end,'{__name:"AdvicePage",setup(){return()=>o(XYUpdate_component,{h:l});}}','replace feedback form with update page');
@@ -83,7 +84,7 @@ relabel(ast);
 for(const name of ['ExportDraft','ExportMultiTimeline']){
  const c=components[name];const part=source.slice(c.start,c.end);
  const marker='fps:"30fps"';const pos=part.indexOf(marker);if(pos<0)throw Error('No settings '+name);
- add(c.start+pos+marker.length,c.start+pos+marker.length,',sizeMode:localStorage.getItem("xy-size-mode")||"original",collectMaterials:localStorage.getItem("xy-copy-materials")==="true",collectBusy:false,collectMessage:""','persist size and material settings '+name);
+ add(c.start+pos+marker.length,c.start+pos+marker.length,',sizeMode:XYLocal_sizeMode(localStorage.getItem("xy-size-mode")),removeSilence:localStorage.getItem("xy-remove-silence")==="true",collectMaterials:localStorage.getItem("xy-copy-materials")==="true",collectBusy:false,collectMessage:""','persist size and material settings '+name);
  const render=name==='ExportDraft'?'o(et,null,{default:i(()=>[':'o(Tt,null,{default:i(()=>[';
  const rp=part.indexOf(render);if(rp<0)throw Error('No render '+name);
  add(c.start+rp+render.length,c.start+rp+render.length,'XYLocal_control(d.value,l,o),','render size '+name);
@@ -111,6 +112,27 @@ for(const name of ['ExportDraft','ExportMultiTimeline']){
   add(start.init.body.start+1,start.init.body.start+1,'if(y.value){Ie.warning("正在读取时间线，请稍后开始导出");return;}','wait for timeline enumeration');
  }
 }
+
+// Keep the original backend but repair unsafe thresholds and stale detection state.
+const breath=components.RemoveBreath;
+function breathFunction(name,transform){const fn=functions.find(f=>f.start>breath.start&&f.end<breath.end&&f.id.name===name);if(!fn)throw Error('Missing breath function '+name);add(fn.body.start,fn.body.end,transform(source.slice(fn.body.start,fn.body.end)),'breath '+name);}
+breathFunction('f',s=>s.replace('noiseDb:y(qe==null?void 0:qe.noiseDb,-40)','noiseDb:XYBreath.noise(qe==null?void 0:qe.noiseDb)').replace('minDuration:y(qe==null?void 0:qe.minDuration,.5)','minDuration:XYBreath.duration(qe==null?void 0:qe.minDuration)'));
+breathFunction('v',()=>'{return -60+Math.max(0,Math.min(100,Number(qe)||0))*.4}');
+breathFunction('D',()=>'{return (XYBreath.noise(qe)+60)/.4}');
+breathFunction('La',()=>'{if(Wu.value||XYBreath.busy){Eu("warning","请等待当前处理完成");return;}const path=qe.draftFolder;Ne.value.refDraftPath=path;Ne.value.draftName=qe.draftName;c.value.selectArea=false;$.value=[];A.value=[];_.value=[];V.value=[];te.value=[];De.clear();pa.value="";$t.value=E();Pl();Ml(false);ga(path).then(async()=>{if(Ne.value.refDraftPath!==path)return;c.value.selectArea=true;await Ya(true);await Xa()}).catch(e=>Eu("error","草稿读取失败："+e));}');
+breathFunction('Re',s=>'{try{XYBreath.validate([...$.value,...V.value],Number($t.value.durationSec));}catch(e){Eu("error",e.message);return;}'+s.slice(1).replace('Cu=await dB(JSON.stringify(Bu));','Cu=await dB(JSON.stringify(Bu));if(!Cu||Cu.status==="failed"||!Cu.items?.length||(Pe.value==="draft"&&Number(Cu.failedCount)>0))throw Error("后台未确认处理成功，请查看素材是否缺失后重试。");'));
+breathFunction('Xa',s=>{
+ s='{if(ma.value){c.value.xyDetectAgain=true;return;}const xyPath=Ne.value.refDraftPath,xyRules=JSON.stringify([d.value,h.value]);'+s.slice(1);
+ s=s.replace('$.value=Bu','if(xyPath!==Ne.value.refDraftPath||xyRules!==JSON.stringify([d.value,h.value])){c.value.xyDetectAgain=true;return;}$.value=Bu');
+ s=s.replace(',if(xyPath',';if(xyPath');
+ s=s.replace('finally{ma.value=!1}','finally{ma.value=false;if(c.value.xyDetectAgain){c.value.xyDetectAgain=false;Xa()}}');return s;
+});
+breathFunction('ga',s=>s.replace('const ht=await ID(qe);','const ht=await ID(qe);if(qe!==Ne.value.refDraftPath)return;'));
+breathFunction('Ya',s=>s.replace('const Be=qa();','const Be=qa();').replace('Le.value=Zt.points','if(Be!==qa())return;Le.value=Zt.points'));
+const breathPart=source.slice(breath.start,breath.end),breathRender='o(ln,{expand2fold:c.value.expand2fold';
+const breathPos=breathPart.indexOf(breathRender);if(breathPos<0)throw Error('Missing breath render');
+add(breath.start+breathPos,breath.start+breathPos,'XYBreath_toolbar(l,o,{busy:Wu.value||ma.value,selected:!!Ne.value.refDraftPath,ready:c.value.selectArea&&$.value.length>0,preset:(noise,min)=>{h.value={...h.value,noiseDb:noise,minDuration:min}},refresh:async()=>{De.clear();await ga(Ne.value.refDraftPath);await Ya(true);await Xa()},draft:async()=>{Pe.value="draft";Ne.value.exportMethod="merged";await Re()}}),','add quick and batch breath controls');
+
 patches.sort((a,b)=>a.start-b.start||a.end-b.end);
 for(let i=1;i<patches.length;i++)if(patches[i].start<patches[i-1].end)throw Error('Overlapping patches '+JSON.stringify(patches.slice(i-1,i+1)));
 let out=source;for(const p of [...patches].reverse())out=out.slice(0,p.start)+p.text+out.slice(p.end);
@@ -121,7 +143,7 @@ const theme=fs.readFileSync('work/studio_theme.css','utf8').replace(/\/\*[\s\S]*
 const inject='const XYDesign_style=document.createElement("style");XYDesign_style.id="xy-studio-theme";XYDesign_style.textContent='+JSON.stringify(theme)+';document.head.appendChild(XYDesign_style);\n';
 const release=JSON.parse(fs.readFileSync('work/release_config.json','utf8'));
 if(!/^\d+\.\d+\.\d+$/.test(release.version))throw Error('Invalid release version');
-out='const XYRelease='+JSON.stringify({version:release.version})+';\n'+fs.readFileSync('work/update_ui.js','utf8')+'\n'+inject+fs.readFileSync('work/studio_design.js','utf8')+'\n'+fs.readFileSync('work/local_runtime.js','utf8')+'\n'+fs.readFileSync('work/draft_preview.js','utf8')+'\n'+out;
+out='const XYRelease='+JSON.stringify({version:release.version})+';\n'+fs.readFileSync('work/update_ui.js','utf8')+'\n'+inject+fs.readFileSync('work/studio_design.js','utf8')+'\n'+fs.readFileSync('work/local_runtime.js','utf8')+'\n'+fs.readFileSync('work/breath_tools.js','utf8')+'\n'+fs.readFileSync('work/draft_preview.js','utf8')+'\n'+out;
 
 // Re-encode string literals without redundant Unicode escapes; preserve values via the parser.
 const packedAst=acorn.parse(out,{ecmaVersion:'latest',sourceType:'module'}),strings=[];
