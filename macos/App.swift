@@ -206,18 +206,16 @@ struct VideoItem: Identifiable {
             defer { downloading=false }
             let configuration=URLSessionConfiguration.ephemeral
             configuration.timeoutIntervalForRequest=60; configuration.timeoutIntervalForResource=900
-            let session=URLSession(configuration:configuration); defer { session.invalidateAndCancel() }
             do {
                 var request=URLRequest(url:asset.browser_download_url)
                 request.setValue("Yuandian-Mac/"+Self.version,forHTTPHeaderField:"User-Agent")
-                let delegate=DownloadProgress { received,total in
+                let (temporary,response)=try await MacDownload.fetch(request,configuration:configuration) { received,total in
                     Task { @MainActor in
                         guard self.downloading else { return }
                         self.downloadProgress=total > 0 ? Double(received)/Double(total) : 0
                         self.downloadBytes=ByteCountFormatter.string(fromByteCount:received,countStyle:.file)+(total > 0 ? " / "+ByteCountFormatter.string(fromByteCount:total,countStyle:.file) : "")
                     }
                 }
-                let (temporary,response)=try await session.download(for:request,delegate:delegate)
                 defer { try? FileManager.default.removeItem(at:temporary) }
                 try Task.checkCancellation()
                 guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw ToolboxError("下载失败，请重试或前往网站。") }

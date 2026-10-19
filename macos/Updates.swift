@@ -27,9 +27,50 @@ enum MacUpdates {
         guard try fileDigest(file) == String(expected.dropFirst(7)) else { throw ToolboxError("安装包校验失败，请重新下载。") }
     }
 }
-final class DownloadProgress: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
-    let report: (Int64,Int64) -> Void
-    init(report:@escaping (Int64,Int64) -> Void) { self.report=report }
+/// One delegate-owned transfer: preserves the temporary file before its callback returns.
+final class MacDownload: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    private let lock=NSLock()
+    private var task:URLSessionDownloadTask?
+    private var cancelled=false
+    private var continuation:CheckedContinuation<(URL,URLResponse),Error>?
+    private var saved:URL?
+    private var saveError:Error?
+    private let report:(Int64,Int64)->Void
+    private init(report:@escaping (Int64,Int64)->Void) { self.report=report }
+    static func fetch(_ request:URLRequest,configuration:URLSessionConfiguration = .ephemeral,progress:@escaping (Int64,Int64)->Void) async throws -> (URL,URLResponse) {
+        let transfer=MacDownload(report:progress)
+        return try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { continuation in
+                transfer.start(request,configuration:configuration,continuation:continuation)
+            }
+        },onCancel:{ transfer.cancel() })
+    }
+    private func start(_ request:URLRequest,configuration:URLSessionConfiguration,continuation:CheckedContinuation<(URL,URLResponse),Error>) {
+        lock.lock()
+        if cancelled { lock.unlock(); continuation.resume(throwing:CancellationError()); return }
+        self.continuation=continuation
+        let session=URLSession(configuration:configuration,delegate:self,delegateQueue:nil)
+        let download=session.downloadTask(with:request); task=download
+        download.resume(); lock.unlock()
+    }
+    private func cancel() { lock.lock(); cancelled=true; let active=task; lock.unlock(); active?.cancel() }
     func urlSession(_ session:URLSession,downloadTask:URLSessionDownloadTask,didWriteData bytesWritten:Int64,totalBytesWritten:Int64,totalBytesExpectedToWrite:Int64) { report(totalBytesWritten,totalBytesExpectedToWrite) }
-    func urlSession(_ session:URLSession,downloadTask:URLSessionDownloadTask,didFinishDownloadingTo location:URL) {}
+    func urlSession(_ session:URLSession,downloadTask:URLSessionDownloadTask,didFinishDownloadingTo location:URL) {
+        let target=FileManager.default.temporaryDirectory.appendingPathComponent("yuandian-download-"+UUID().uuidString)
+        do { try FileManager.default.moveItem(at:location,to:target); saved=target }
+        catch { saveError=error }
+    }
+    func urlSession(_ session:URLSession,task:URLSessionTask,didCompleteWithError error:Error?) {
+        lock.lock(); let callback=continuation; continuation=nil; self.task=nil; let stopped=cancelled; lock.unlock()
+        defer { session.finishTasksAndInvalidate() }
+        if let failure:Error = stopped ? CancellationError() : (error ?? saveError) {
+            if let saved=saved { try? FileManager.default.removeItem(at:saved) }
+            callback?.resume(throwing:failure)
+        } else if let saved=saved, let response=task.response {
+            callback?.resume(returning:(saved,response))
+        } else {
+            if let saved=saved { try? FileManager.default.removeItem(at:saved) }
+            callback?.resume(throwing:ToolboxError("下载未返回有效文件，请重试。"))
+        }
+    }
 }

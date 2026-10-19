@@ -96,14 +96,13 @@ httpd.serve_forever()
     for _ in 0..<100 { if FileManager.default.fileExists(atPath:portFile.path) { break }; try await Task.sleep(nanoseconds:50_000_000) }
     let port=try String(contentsOf:portFile,encoding:.utf8)
     let request=URLRequest(url:URL(string:"http://127.0.0.1:\(port)/network.zip")!)
-    let session=URLSession(configuration:.ephemeral); defer { session.invalidateAndCancel() }
     let probe=TransferProbe()
-    let (file,response)=try await session.download(for:request,delegate:DownloadProgress { received,_ in probe.record(received) })
+    let (file,response)=try await MacDownload.fetch(request) { received,_ in probe.record(received) }
     defer { try? FileManager.default.removeItem(at:file) }
     try expect((response as? HTTPURLResponse)?.statusCode == 200,"download HTTP success")
     try MacUpdates.verify(file,expected:"sha256:"+fileDigest(package))
     try expect(probe.received > 0,"download delegate must report progress")
-    let task=Task { try await session.download(for:request,delegate:DownloadProgress { _,_ in }) }
+    let task=Task { try await MacDownload.fetch(request) { _,_ in } }
     try await Task.sleep(nanoseconds:80_000_000); task.cancel()
     do { let (leftover,_)=try await task.value; try? FileManager.default.removeItem(at:leftover); throw ToolboxError("download cancellation ignored") }
     catch is CancellationError {}
