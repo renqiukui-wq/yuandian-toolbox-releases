@@ -49,9 +49,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          TAG=macos-v0.1.0
+          TAG=macos-v0.1.1
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release already exists; refusing to replace published binaries. Increment the Mac version for a new release."
             exit 1
           fi
-          gh release create "$TAG" release-assets/* --target "$GITHUB_SHA" --title "元点剪辑批量工具箱 · macOS 0.1.0 预览版" --notes-file macos/README.md --prerelease --latest=false
+          gh release create "$TAG" release-assets/* --target "$GITHUB_SHA" --title "元点剪辑批量工具箱 · macOS 0.1.1 预览版" --notes-file macos/README.md --prerelease --latest=false
