@@ -9,10 +9,12 @@ struct ToolboxError: LocalizedError {
 let mediaExtensions: Set<String> = ["mp4","mov","m4v","mkv","avi","webm","jpg","jpeg","png","webp","heic","bmp","gif","mp3","wav","m4a","aac","flac","aiff","caf"]
 let mediaPathKeys: Set<String> = ["path", "file_Path", "file_path", "material_path", "local_path"]
 func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
-func fileDigest(_ url: URL) throws -> String {
+func fileDigest(_ url: URL, cancelled: () -> Bool = { false }) throws -> String {
     let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
     var hash = SHA256()
-    while let data = try handle.read(upToCount: 1024 * 1024), !data.isEmpty { hash.update(data: data) }
+    while let data = try handle.read(upToCount: 1024 * 1024), !data.isEmpty {
+        if cancelled() { throw CancellationError() }; hash.update(data: data)
+    }
     return hash.finalize().map { String(format: "%02x", $0) }.joined()
 }
 func cleanName(_ name: String) -> String {
@@ -97,7 +99,8 @@ enum DraftLibrary {
         for doc in docs {
             let date = (try? doc.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
             latest = max(latest, date)
-            if let data = try? Data(contentsOf: doc) { parts.append(doc.path + digest(data)) }
+            if let size = (try? doc.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size <= 64 * 1024 * 1024, let data = try? Data(contentsOf: doc) { parts.append(doc.path + digest(data)) }
+            else { parts.append(doc.path + ":unreadable:\(date.timeIntervalSince1970)") }
             guard let object = try? json(doc) else { unreadable += 1; continue }
             if doc.lastPathComponent == "draft_meta_info.json", doc.deletingLastPathComponent() == folder,
                let dict = object as? [String: Any], let title = dict["draft_name"] as? String, !title.isEmpty { name = title }
@@ -112,11 +115,13 @@ enum DraftLibrary {
         let count = Set(docs.filter { $0.path.contains("/Timelines/") }.map { $0.deletingLastPathComponent().path }).count
         return Draft(folder: folder, name: name, modified: latest, fingerprint: digest(Data(parts.joined(separator: "|").utf8)), documents: docs, materials: materials.sorted { $0.path < $1.path }, cover: cover, timelineCount: max(1,count), unreadable: unreadable)
     }
-    static func scan(_ root: URL) throws -> [Draft] {
+    static func scan(_ root: URL, cancelled: () -> Bool = { false }) throws -> [Draft] {
+        guard FileManager.default.isReadableFile(atPath:root.path) else { throw ToolboxError("没有权限读取草稿文件夹，请重新选择可访问的位置。") }
         if !documents(root).isEmpty { return [try inspect(root)] }
         var found: [Draft] = []
         guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey,.isSymbolicLinkKey], options: [.skipsHiddenFiles]) else { throw ToolboxError("无法读取所选文件夹") }
         for case let url as URL in walker {
+            if cancelled() { throw CancellationError() }
             let values = try? url.resourceValues(forKeys: [.isDirectoryKey,.isSymbolicLinkKey])
             if values?.isSymbolicLink == true { walker.skipDescendants(); continue }
             guard values?.isDirectory == true else { continue }
@@ -127,7 +132,8 @@ enum DraftLibrary {
 }
 enum MaterialPackager {
     // Copy into a new destination. Never rewrite the user's original draft.
-    static func package(_ draft: Draft, to parent: URL, cancelled: () -> Bool = { false }) throws -> URL {
+    static func package(_ draft: Draft, to parent: URL, cancelled: () -> Bool = { false }, progress: (String,Double) -> Void = { _,_ in }) throws -> URL {
+        if cancelled() { throw CancellationError() }
         let fm = FileManager.default
         guard !isInside(parent, draft.folder) else { throw ToolboxError("保存位置不能位于原草稿内部") }
         let fresh = try DraftLibrary.inspect(draft.folder)
@@ -143,18 +149,23 @@ enum MaterialPackager {
                 if (try file.resourceValues(forKeys: [.isSymbolicLinkKey])).isSymbolicLink == true { throw ToolboxError("草稿包含符号链接，请先在剪映整理为普通文件后再打包。") }
             }
         }
-        try fm.copyItem(at: fresh.folder, to: temporary)
+        try CopyFiles.tree(from:fresh.folder,to:temporary,cancelled:cancelled)
         let media = temporary.appendingPathComponent("YuandianMedia")
         try fm.createDirectory(at: media, withIntermediateDirectories: true)
         var replacements: [String:String] = [:]
         var manifest: [[String:String]] = []
-        for source in fresh.materials {
+        for (index,source) in fresh.materials.enumerated() {
             if cancelled() { throw CancellationError() }
             let basename = String(digest(Data(source.path.utf8)).prefix(16)) + "_" + cleanName(source.lastPathComponent)
             let target = media.appendingPathComponent(basename)
-            try fm.copyItem(at: source.resolvingSymlinksInPath(), to: target)
-            let hash = try fileDigest(source)
-            guard hash == (try fileDigest(target)) else { throw ToolboxError("素材校验失败：\(source.lastPathComponent)") }
+            progress(source.lastPathComponent,Double(index)/Double(fresh.materials.count))
+            if !fm.fileExists(atPath:target.path) {
+                try CopyFiles.file(from:source.resolvingSymlinksInPath(),to:target,cancelled:cancelled) { portion in
+                    progress(source.lastPathComponent,(Double(index)+portion)/Double(fresh.materials.count))
+                }
+            }
+            let hash = try fileDigest(source,cancelled:cancelled)
+            guard hash == (try fileDigest(target,cancelled:cancelled)) else { throw ToolboxError("素材校验失败：\(source.lastPathComponent)") }
             let final = output.appendingPathComponent("YuandianMedia").appendingPathComponent(basename)
             replacements[source.path] = final.path
             manifest.append(["original": source.path, "relative": "YuandianMedia/" + basename, "sha256": hash])
@@ -169,6 +180,7 @@ enum MaterialPackager {
         guard (try DraftLibrary.inspect(fresh.folder)).fingerprint == fresh.fingerprint else { throw ToolboxError("处理期间草稿发生变化，请保存草稿后重试。") }
         if cancelled() { throw CancellationError() }
         try fm.moveItem(at: temporary, to: output)
+        progress("完成",1)
         return output
     }
 }
@@ -176,12 +188,45 @@ enum SizeMode: String, CaseIterable, Identifiable {
     case original = "保持原尺寸", auto720 = "自动 720P", landscape = "720P 横屏", portrait = "720P 竖屏"
     var id: String { rawValue }
     func dimensions(width: Double, height: Double) -> (Int,Int) {
-        func even(_ n: Double) -> Int { max(2,Int((n / 2).rounded()) * 2) }
+        func even(_ n: Double) -> Int { guard n.isFinite, n > 0, n <= 16384 else { return 0 }; return max(2,Int((n / 2).rounded()) * 2) }
         switch self {
         case .original: return (even(width),even(height))
         case .landscape: return (1280,720)
         case .portrait: return (720,1280)
         case .auto720: return width >= height ? (even(720 * width / height),720) : (720,even(720 * height / width))
         }
+    }
+}
+
+// Stream copies so cancellation remains responsive for multi-gigabyte media.
+enum CopyFiles {
+    static func file(from source:URL,to target:URL,cancelled:() -> Bool = { false },progress:(Double) -> Void = {_ in}) throws {
+        if cancelled() { throw CancellationError() }
+        let fm=FileManager.default
+        guard !fm.fileExists(atPath:target.path) else { throw ToolboxError("目标文件已存在：\(target.lastPathComponent)") }
+        let total=(try source.resourceValues(forKeys:[.fileSizeKey])).fileSize ?? 0
+        guard fm.createFile(atPath:target.path,contents:nil) else { throw ToolboxError("无法写入：\(target.path)") }
+        let input=try FileHandle(forReadingFrom:source); defer { try? input.close() }
+        let output=try FileHandle(forWritingTo:target); defer { try? output.close() }
+        var written=0
+        while let chunk=try input.read(upToCount:1024*1024), !chunk.isEmpty {
+            if cancelled() { throw CancellationError() }
+            try output.write(contentsOf:chunk); written += chunk.count
+            progress(total > 0 ? min(1,Double(written)/Double(total)) : 0)
+        }
+        try output.synchronize()
+        if cancelled() { throw CancellationError() }
+        if let date=(try? source.resourceValues(forKeys:[.contentModificationDateKey]))?.contentModificationDate { try fm.setAttributes([.modificationDate:date],ofItemAtPath:target.path) }
+    }
+    static func tree(from source:URL,to target:URL,cancelled:() -> Bool) throws {
+        let fm=FileManager.default
+        if cancelled() { throw CancellationError() }
+        let values=try source.resourceValues(forKeys:[.isSymbolicLinkKey,.isDirectoryKey,.isRegularFileKey])
+        guard values.isSymbolicLink != true else { throw ToolboxError("草稿包含符号链接，无法安全打包。") }
+        if values.isDirectory == true {
+            try fm.createDirectory(at:target,withIntermediateDirectories:false)
+            for child in try fm.contentsOfDirectory(at:source,includingPropertiesForKeys:nil) { try tree(from:child,to:target.appendingPathComponent(child.lastPathComponent),cancelled:cancelled) }
+        } else if values.isRegularFile == true { try file(from:source,to:target,cancelled:cancelled) }
+        else { throw ToolboxError("草稿含不支持的特殊文件：\(source.lastPathComponent)") }
     }
 }

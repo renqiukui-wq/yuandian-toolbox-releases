@@ -1,24 +1,31 @@
 import Foundation
 import AppKit
-import AVFoundation
+@preconcurrency import AVFoundation
 import QuartzCore
-import CoreImage
+@preconcurrency import CoreImage
+import ImageIO
 
 struct Preview {
     let image: NSImage?
     let note: String
 }
 enum PreviewService {
+    static func thumbnail(_ url:URL) -> NSImage? {
+        guard let source=CGImageSourceCreateWithURL(url as CFURL,nil),
+              let image=CGImageSourceCreateThumbnailAtIndex(source,0,[kCGImageSourceCreateThumbnailFromImageAlways:true,kCGImageSourceThumbnailMaxPixelSize:960,kCGImageSourceCreateThumbnailWithTransform:true] as CFDictionary) else { return nil }
+        return NSImage(cgImage:image,size:.zero)
+    }
     static func make(_ draft: Draft) -> Preview {
-        if let cover = draft.cover, let data = try? Data(contentsOf: cover), let image = NSImage(data: data) {
+        if let cover = draft.cover, let image = thumbnail(cover) {
             let saved = (try? cover.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
             let note = saved < draft.modified.addingTimeInterval(-2) ? "封面早于草稿修改，请在剪映保存新封面" : "剪映已保存封面"
             return Preview(image: image, note: note)
         }
-        for file in draft.materials.prefix(8) where FileManager.default.fileExists(atPath: file.path) {
-            if ["png","jpg","jpeg","heic","webp","bmp"].contains(file.pathExtension.lowercased()), let image = NSImage(contentsOf: file) {
+        for file in draft.materials where FileManager.default.fileExists(atPath: file.path) {
+            if ["png","jpg","jpeg","heic","webp","bmp"].contains(file.pathExtension.lowercased()), let image = thumbnail(file) {
                 return Preview(image: image, note: "素材画面 · 非完整时间线预览")
             }
+            guard ["mp4","mov","m4v","mkv","avi","webm"].contains(file.pathExtension.lowercased()) else { continue }
             let asset = AVURLAsset(url: file)
             let generator = AVAssetImageGenerator(asset: asset)
             generator.appliesPreferredTrackTransform = true
@@ -34,7 +41,9 @@ enum CoverMode: String, CaseIterable, Identifiable {
 }
 enum VideoProcessor {
     static func convert(input: URL, parent: URL, mode: SizeMode, cover: CoverMode, progress: @escaping (Double) -> Void) async throws -> URL {
+        try Task.checkCancellation()
         let fm = FileManager.default
+        guard fm.isWritableFile(atPath:parent.path) else { throw ToolboxError("没有权限写入输出文件夹，请重新选择。") }
         let output = parent.appendingPathComponent(cleanName(input.deletingPathExtension().lastPathComponent)).appendingPathExtension("mp4")
         guard input.standardizedFileURL != output.standardizedFileURL, !fm.fileExists(atPath: output.path) else { throw ToolboxError("目标已有同名视频：\(output.lastPathComponent)。请选择空文件夹或修改名称。") }
         let temporary = parent.appendingPathComponent(".yuandian-" + UUID().uuidString).appendingPathExtension("mp4")
@@ -49,9 +58,9 @@ enum VideoProcessor {
         let frameRate = try await track.load(.nominalFrameRate)
         let bounds = CGRect(origin: .zero, size: natural).applying(transform)
         let (width,height) = mode.dimensions(width: abs(bounds.width), height: abs(bounds.height))
-        guard width <= 16384, height <= 16384 else { throw ToolboxError("视频尺寸超出编码器支持范围") }
+        guard width > 0, height > 0, width <= 16384, height <= 16384 else { throw ToolboxError("视频尺寸超出编码器支持范围") }
         let renderSize = CGSize(width: width, height: height)
-        let fps = frameRate > 0 ? Double(frameRate) : 30
+        let fps = frameRate.isFinite && frameRate > 0 ? Double(frameRate) : 30
         var chosenCover: CIImage?
         if cover == .random {
             let generator = AVAssetImageGenerator(asset: asset)
@@ -63,7 +72,7 @@ enum VideoProcessor {
             chosenCover = CIImage(cgImage: cg)
         }
         let coverImage = chosenCover
-        let context = CIContext(options: [.useSoftwareRenderer: true])
+        let context = CIContext(options: nil)
         let rectangle = CGRect(origin: .zero, size: renderSize)
         let composition = AVMutableVideoComposition(asset: asset, applyingCIFiltersWithHandler: { request in
             // Select by timeline time, not a persistent animation layer. Only frame zero changes.

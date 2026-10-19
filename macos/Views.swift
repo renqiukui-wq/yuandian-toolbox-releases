@@ -23,6 +23,7 @@ struct MainView: View {
                     nav("草稿库","square.grid.2x2")
                     nav("视频处理","film.stack")
                     nav("检查更新","arrow.down.circle")
+                    if model.newVersion { Text("有新版可下载").font(.caption).foregroundStyle(accent).padding(.leading,12) }
                 }
                 Spacer()
                 Picker("外观",selection:$appearance) { Text("跟随系统").tag("跟随系统"); Text("浅色").tag("浅色"); Text("深色").tag("深色") }.labelsHidden()
@@ -53,8 +54,8 @@ struct MainView: View {
                 }
             }.background(Color(nsColor:.windowBackgroundColor))
         }.tint(accent)
-        .onReceive(clock) { _ in if model.section == "草稿库" { model.refresh() } }
-        .onReceive(NotificationCenter.default.publisher(for:NSApplication.didBecomeActiveNotification)) { _ in model.refresh() }
+        .onReceive(clock) { _ in if model.section == "草稿库" && model.automaticRefresh { model.refresh() } }
+        .onReceive(NotificationCenter.default.publisher(for:NSApplication.didBecomeActiveNotification)) { _ in if model.automaticRefresh { model.refresh() } }
         .sheet(isPresented:Binding(get:{zoomed != nil},set:{if !$0 {zoomed=nil}})) {
             VStack(spacing:18) {
                 if let id = zoomed, let image = model.previews[id]?.image {
@@ -80,11 +81,12 @@ struct MainView: View {
                     Label("草稿位置",systemImage:"folder").font(.headline)
                     Spacer()
                     Button("选择文件夹") { model.selectRoot() }.buttonStyle(.borderedProminent).disabled(model.busy || model.searching)
-                    Button { model.refresh() } label: { Image(systemName:"arrow.clockwise") }.help("刷新草稿与封面").disabled(model.root == nil || model.searching || model.busy)
+                    Button { model.refresh(force:true) } label: { Image(systemName:"arrow.clockwise") }.help("刷新草稿与封面").disabled(model.root == nil || model.searching || model.busy)
                 }
                 if let root = model.root { Text(root.path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled).padding(.top,6) }
                 Text(model.notice).font(.callout).foregroundStyle(.secondary).padding(.top,12).textSelection(.enabled)
-                if model.searching { ProgressView("正在检查草稿与预览…").padding(.top,8) }
+                if model.searching { HStack { ProgressView().controlSize(.small); Text(model.scanProgress).font(.caption).lineLimit(1); Spacer(); Button("停止扫描") { model.stopScan() } }.padding(.top,8) }
+                Toggle("自动刷新已保存的草稿和封面",isOn:$model.automaticRefresh).font(.caption).toggleStyle(.checkbox)
             }
             HStack {
                 TextField("搜索草稿名称",text:$model.query).textFieldStyle(.roundedBorder).frame(maxWidth:320)
@@ -129,6 +131,7 @@ struct MainView: View {
                     Spacer()
                     Button("打包所选草稿") { model.packageDrafts() }.buttonStyle(.borderedProminent).disabled(model.busy || model.selected.isEmpty || model.searching)
                 }
+                if !model.report.isEmpty { DisclosureGroup("查看最近任务的完整错误") { Text(model.report).font(.caption).textSelection(.enabled) } }
                 Text("预览会跟随已保存文件刷新；未保存的编辑无法读取。素材画面仅用于识别草稿。打包后的路径针对当前 Mac，跨电脑迁移需要在剪映重新定位素材。").font(.caption).foregroundStyle(.secondary).padding(.top,12)
             }
         }
@@ -149,14 +152,15 @@ struct MainView: View {
                 Text("随机封面会替换视频第一帧，音频与视频时长保持；其他播放软件的缩略图策略可能不同。固定横竖屏按比例缩放并补黑边。").font(.caption).foregroundStyle(.secondary).padding(.top,8)
             }
             Surface {
-                HStack { Text("待处理视频 · \(model.videos.count)").font(.headline); Spacer(); Button("清空") { model.videos.removeAll() }.disabled(model.busy); Button("添加视频") { model.addVideos() }.buttonStyle(.borderedProminent).disabled(model.busy) }
+                HStack { Text("待处理视频 · \(model.videos.count)").font(.headline); Spacer(); Button("移除已完成") { model.videos.removeAll { $0.completed } }.disabled(model.busy || !model.videos.contains(where: { $0.completed })); Button("清空") { model.videos.removeAll() }.disabled(model.busy); Button("添加视频") { model.addVideos() }.buttonStyle(.borderedProminent).disabled(model.busy) }
                 if model.videos.isEmpty { Text("先在剪映导出视频，再添加到这里批量处理。").foregroundStyle(.secondary).padding(.vertical,28) }
                 ForEach(model.videos) { video in
-                    HStack { Image(systemName:"film").foregroundStyle(accent); Text(video.url.lastPathComponent).lineLimit(1).help(video.url.path); Spacer(); Text(video.state).font(.caption).foregroundStyle(.secondary).lineLimit(3).frame(maxWidth:300,alignment:.trailing) }.padding(.vertical,8)
+                    HStack { Image(systemName:"film").foregroundStyle(accent); Text(video.url.lastPathComponent).lineLimit(1).help(video.url.path); Spacer(); Text(video.state).font(.caption).foregroundStyle(.secondary).lineLimit(3).frame(maxWidth:300,alignment:.trailing); Button { model.videos.removeAll { $0.id == video.id } } label: { Image(systemName:"xmark.circle") }.buttonStyle(.borderless).help("移除此视频").disabled(model.busy) }.padding(.vertical,8)
                     Divider()
                 }
-                HStack { Button("选择输出文件夹") { model.output=model.chooseFolder("选择最终视频保存位置") }.disabled(model.busy); Text(model.output?.path ?? "尚未选择").font(.caption).foregroundStyle(.secondary).lineLimit(2); Spacer(); Button("开始批量处理") { model.processVideos() }.buttonStyle(.borderedProminent).disabled(model.busy || model.videos.isEmpty || model.output == nil) }.padding(.top,16)
-                Text(model.notice).font(.caption).foregroundStyle(.secondary).textSelection(.enabled).padding(.top,10)
+                HStack { Button("选择输出文件夹") { model.chooseOutput() }.disabled(model.busy); Text(model.output?.path ?? "尚未选择").font(.caption).foregroundStyle(.secondary).lineLimit(2); Spacer(); Button("开始批量处理") { model.processVideos() }.buttonStyle(.borderedProminent).disabled(model.busy || !model.videos.contains(where: { !$0.completed }) || model.output == nil) }.padding(.top,16)
+                Text(model.videoNotice).font(.caption).foregroundStyle(.secondary).textSelection(.enabled).padding(.top,10)
+                if !model.report.isEmpty { DisclosureGroup("查看最近任务的完整错误") { Text(model.report).font(.caption).textSelection(.enabled) } }
             }
             Text("Mac 首版提供视频后处理，不调用 Windows 剪映导出引擎。复杂草稿时间线请在 Mac 剪映中导出。输出目录只保留最终 MP4，不生成原版备份；输入视频保留。").font(.caption).foregroundStyle(.secondary).frame(maxWidth:.infinity,alignment:.leading)
         }
@@ -165,8 +169,10 @@ struct MainView: View {
         Surface {
             HStack { Image(systemName:"arrow.down.circle.fill").font(.system(size:42)).foregroundStyle(accent); VStack(alignment:.leading,spacing:6) { Text("元点剪辑批量工具箱 · Mac").font(.title2.bold()); Text("当前版本 \(AppModel.version) · macOS 13 或更新版本").foregroundStyle(.secondary) } }
             Text(model.updateText).padding(.vertical,20).textSelection(.enabled)
-            if model.checking || model.downloading { ProgressView().controlSize(.small) }
-            HStack { Button("检查更新") { model.checkUpdates() }.disabled(model.checking); Button("下载 Mac 安装包") { model.downloadUpdate() }.buttonStyle(.borderedProminent).disabled(model.release == nil || model.downloading); Button("下载慢？去网站下载") { model.website() } }
+            if model.checking { ProgressView().controlSize(.small) }
+            if model.downloading { VStack(alignment:.leading,spacing:8) { ProgressView(value:model.downloadProgress); HStack { Text(model.downloadBytes).font(.caption); Spacer(); Button("取消下载") { model.cancelDownload() } } } }
+            if model.downloadedFile != nil { Button("打开下载位置") { model.showDownload() } }
+            HStack { Button("检查更新") { model.checkUpdates() }.disabled(model.checking || model.downloading); Button("下载 Mac 安装包") { model.downloadUpdate() }.buttonStyle(.borderedProminent).disabled(model.release == nil || model.downloading || model.checking); Button("下载慢？去网站下载") { model.website() } }
             if let release = model.release { Divider().padding(.vertical,16); Text(release.tag_name).font(.headline); Text(release.body ?? "").font(.callout).textSelection(.enabled) }
             Text("下载完成后会校验安装包并在 Finder 中显示。解压后拖入“应用程序”完成安装；当前 Mac 首版不自动替换正在运行的应用。").font(.caption).foregroundStyle(.secondary).padding(.top,20)
         }

@@ -64,12 +64,59 @@ func pixel(_ url:URL,seconds:Double) throws -> [UInt8] {
     }
     return bytes
 }
+
+final class TransferProbe: @unchecked Sendable {
+    private let lock=NSLock(); private var count:Int64=0
+    func record(_ value:Int64) { lock.lock(); count=max(count,value); lock.unlock() }
+    var received:Int64 { lock.lock(); defer { lock.unlock() }; return count }
+}
+func testDownload(_ root:URL) async throws {
+    let package=root.appendingPathComponent("network.zip")
+    try Data(repeating:71,count:2*1024*1024).write(to:package)
+    let server=Process(); server.executableURL=URL(fileURLWithPath:"/usr/bin/python3")
+    server.arguments=["-c", """
+import http.server, os, sys, time
+os.chdir(sys.argv[1])
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, *args): pass
+    def copyfile(self, source, output):
+        while True:
+            chunk=source.read(32768)
+            if not chunk: break
+            try: output.write(chunk); output.flush()
+            except (BrokenPipeError, ConnectionResetError): break
+            time.sleep(0.01)
+httpd=http.server.ThreadingHTTPServer(('127.0.0.1',0), Handler)
+with open('port.txt','w') as file: file.write(str(httpd.server_port))
+httpd.serve_forever()
+""",root.path]
+    server.standardOutput=FileHandle.nullDevice; server.standardError=FileHandle.nullDevice
+    try server.run(); defer { if server.isRunning { server.terminate(); server.waitUntilExit() } }
+    let portFile=root.appendingPathComponent("port.txt")
+    for _ in 0..<100 { if FileManager.default.fileExists(atPath:portFile.path) { break }; try await Task.sleep(nanoseconds:50_000_000) }
+    let port=try String(contentsOf:portFile,encoding:.utf8)
+    let request=URLRequest(url:URL(string:"http://127.0.0.1:\(port)/network.zip")!)
+    let session=URLSession(configuration:.ephemeral); defer { session.invalidateAndCancel() }
+    let probe=TransferProbe()
+    let (file,response)=try await session.download(for:request,delegate:DownloadProgress { received,_ in probe.record(received) })
+    defer { try? FileManager.default.removeItem(at:file) }
+    try expect((response as? HTTPURLResponse)?.statusCode == 200,"download HTTP success")
+    try MacUpdates.verify(file,expected:"sha256:"+fileDigest(package))
+    try expect(probe.received > 0,"download delegate must report progress")
+    let task=Task { try await session.download(for:request,delegate:DownloadProgress { _,_ in }) }
+    try await Task.sleep(nanoseconds:80_000_000); task.cancel()
+    do { let (leftover,_)=try await task.value; try? FileManager.default.removeItem(at:leftover); throw ToolboxError("download cancellation ignored") }
+    catch is CancellationError {}
+    catch let error as URLError { try expect(error.code == .cancelled,"cancel must interrupt network download") }
+}
+
 @main struct Tests {
     static func main() async throws {
         _ = NSApplication.shared
         let fm=FileManager.default
         let root=fm.temporaryDirectory.appendingPathComponent("yuandian-tests-"+UUID().uuidString)
         try fm.createDirectory(at:root,withIntermediateDirectories:true); defer { try? fm.removeItem(at:root) }
+        try await testDownload(root)
         let library=root.appendingPathComponent("drafts"); let draft=library.appendingPathComponent("中文 草稿"); let destination=root.appendingPathComponent("packed")
         try fm.createDirectory(at:draft,withIntermediateDirectories:true); try fm.createDirectory(at:destination,withIntermediateDirectories:true)
         let source=root.appendingPathComponent("same '中文'.png"); try paint(source,.red)
@@ -89,6 +136,34 @@ func pixel(_ url:URL,seconds:Double) throws -> [UInt8] {
         try expect(readback.materials.allSatisfy { isInside($0,packed) && fm.fileExists(atPath:$0.path) },"all material paths must point inside packaged copy")
         try expect(try Data(contentsOf:document) == original,"original draft must be untouched")
         do { _ = try MaterialPackager.package(changed,to:destination); throw ToolboxError("collision was accepted") } catch { try expect(error.localizedDescription.contains("同名"),"collision refusal") }
+        let repeatDestination=root.appendingPathComponent("repacked"); try fm.createDirectory(at:repeatDestination,withIntermediateDirectories:true)
+        let repeated=try MaterialPackager.package(readback,to:repeatDestination)
+        try expect(try DraftLibrary.inspect(repeated).materials.allSatisfy { isInside($0,repeated) },"repack an already packaged draft")
+        let cancelDestination=root.appendingPathComponent("cancelled-package"); try fm.createDirectory(at:cancelDestination,withIntermediateDirectories:true)
+        var stopCopy=false
+        do {
+            _ = try MaterialPackager.package(changed,to:cancelDestination,cancelled:{stopCopy}) { _,_ in stopCopy=true }
+            throw ToolboxError("copy cancellation ignored")
+        } catch is CancellationError {}
+        try expect(try fm.contentsOfDirectory(atPath:cancelDestination.path).isEmpty,"cancelled packaging must clean temporary output")
+        let manyDraft=root.appendingPathComponent("many-materials"); try fm.createDirectory(at:manyDraft,withIntermediateDirectories:true)
+        var manyPaths=(0..<12).map { ["path":root.appendingPathComponent("missing-\($0).mp4").path] }
+        manyPaths.append(["path":source.path])
+        try JSONSerialization.data(withJSONObject:["materials":manyPaths]).write(to:manyDraft.appendingPathComponent("draft_content.json"))
+        try expect(try PreviewService.make(DraftLibrary.inspect(manyDraft)).image != nil,"preview must find an image beyond the first eight references")
+        let large=root.appendingPathComponent("large.bin"); try Data(repeating:45,count:8*1024*1024).write(to:large)
+        var streamStop=false
+        do { try CopyFiles.file(from:large,to:root.appendingPathComponent("partial.bin"),cancelled:{streamStop}) { portion in if portion > 0 { streamStop=true } }; throw ToolboxError("stream cancellation ignored") } catch is CancellationError {}
+        try expect(try fileDigest(large) == digest(Data(repeating:45,count:8*1024*1024)),"stream cancellation preserves source")
+        let checksumFile=root.appendingPathComponent("download.zip"); try Data("test-package".utf8).write(to:checksumFile)
+        try MacUpdates.verify(checksumFile,expected:"sha256:"+fileDigest(checksumFile))
+        do { try MacUpdates.verify(checksumFile,expected:"sha256:"+String(repeating:"0",count:64)); throw ToolboxError("bad checksum accepted") } catch { try expect(error.localizedDescription.contains("校验失败"),"reject bad checksum") }
+        func release(_ version:String,draft:Bool=false) -> MacRelease {
+            MacRelease(tag_name:version,html_url:URL(string:MacUpdates.repository+"/releases/tag/"+version)!,body:nil,draft:draft,assets:[MacRelease.Asset(name:MacUpdates.assetName,browser_download_url:URL(string:MacUpdates.repository+"/releases/download/"+version+"/"+MacUpdates.assetName)!,digest:nil)])
+        }
+        try expect(MacUpdates.latest([release("macos-v0.1.2"),release("macos-v0.1.10"),release("v9.0.0"),release("macos-v9.0.0",draft:true),release("macos-vbad")])?.tag_name == "macos-v0.1.10","choose newest valid Mac version rather than API order")
+        try expect(!MacUpdates.validDownload(URL(string:"https://example.com/download/macos-v0.1.1/file.zip")!),"reject external update URL")
+        try expect(SizeMode.auto720.dimensions(width:0,height:0).0 == 0,"invalid dimensions cannot trap")
         try fm.removeItem(at:source)
         do { _ = try MaterialPackager.package(changed,to:root); throw ToolboxError("missing material accepted") } catch { try expect(error.localizedDescription.contains("不存在"),"missing material refusal") }
         try Data("encrypted-not-json".utf8).write(to:document)
@@ -99,6 +174,11 @@ func pixel(_ url:URL,seconds:Double) throws -> [UInt8] {
         let silent=root.appendingPathComponent("silent.mov"); try await movie(silent)
         let input=root.appendingPathComponent("input.mp4"); try await addAudio(silent,input)
         let inputHash=try fileDigest(input)
+        let cancelOut=root.appendingPathComponent("cancel-video"); try fm.createDirectory(at:cancelOut,withIntermediateDirectories:true)
+        let cancelledTask=Task { () throws -> URL in try Task.checkCancellation(); return try await VideoProcessor.convert(input:input,parent:cancelOut,mode:.landscape,cover:.first,progress:{_ in}) }
+        cancelledTask.cancel()
+        do { _ = try await cancelledTask.value; throw ToolboxError("video cancellation ignored") } catch is CancellationError {}
+        try expect(try fm.contentsOfDirectory(atPath:cancelOut.path).isEmpty,"video cancellation leaves clean output")
         for mode in SizeMode.allCases {
             let out=root.appendingPathComponent(mode.id); try fm.createDirectory(at:out,withIntermediateDirectories:true)
             let url=try await VideoProcessor.convert(input:input,parent:out,mode:mode,cover:.first,progress:{_ in})
@@ -116,6 +196,6 @@ func pixel(_ url:URL,seconds:Double) throws -> [UInt8] {
         let rotOut=root.appendingPathComponent("rotated-output"); try fm.createDirectory(at:rotOut,withIntermediateDirectories:true)
         _ = try await VideoProcessor.convert(input:rotated,parent:rotOut,mode:.auto720,cover:.first,progress:{_ in})
         try expect(try fileDigest(input) == inputHash,"input video must remain unchanged")
-        print("PASS: draft scan, preview content invalidation, source preservation, material packaging, collisions, missing media, encrypted drafts, 4 size modes, audio and duration preservation, random first frame, later-frame preservation, rotation and clean output")
+        print("PASS: draft scan, preview content invalidation, source preservation, material packaging, collisions, missing media, encrypted drafts, 4 size modes, audio and duration preservation, random first frame, later-frame preservation, rotation, clean output, preview fallback beyond eight references, repack, streamed copy cancellation, video cancellation, newest Mac release selection and download SHA-256 validation")
     }
 }

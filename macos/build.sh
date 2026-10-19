@@ -5,14 +5,14 @@ mkdir -p build outputs
 SDK="$(xcrun --sdk macosx --show-sdk-path)"
 COMMON=(-swift-version 5 -parse-as-library -sdk "$SDK" -framework AppKit -framework AVFoundation -framework QuartzCore -framework CryptoKit)
 if [[ "${1:-}" == "test" ]]; then
-  xcrun swiftc "${COMMON[@]}" Core.swift Media.swift Tests.swift -o build/tests
+  xcrun swiftc "${COMMON[@]}" Core.swift Media.swift Updates.swift Tests.swift -o build/tests
   ./build/tests
   exit 0
 fi
 APP="build/元点剪辑批量工具箱.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" build/AppIcon.iconset
 for ARCH in arm64 x86_64; do
-  xcrun swiftc "${COMMON[@]}" -O -target "$ARCH-apple-macos13.0" Core.swift Media.swift App.swift Views.swift -o "build/yuandian-$ARCH"
+  xcrun swiftc "${COMMON[@]}" -O -target "$ARCH-apple-macos13.0" Core.swift Media.swift Updates.swift App.swift Views.swift -o "build/yuandian-$ARCH"
 done
 lipo -create build/yuandian-arm64 build/yuandian-x86_64 -output "$APP/Contents/MacOS/YuandianToolbox"
 lipo "$APP/Contents/MacOS/YuandianToolbox" -verify_arch arm64 x86_64
