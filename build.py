@@ -23,7 +23,7 @@ def main():
   for name in RESOURCES:
    if not (args.original_dir/'Resources'/name).is_file():parser.error('Missing supplied resource: '+name)
  stage=ROOT/'.build';work=stage/'work';work.mkdir(parents=True,exist_ok=True)
- for name in SOURCES+['draft_codec.c','build_codec.py','test_draft_codec.py']:shutil.copy2(ROOT/name,work/name)
+ for name in SOURCES+['draft_codec.c','build_codec.py','test_draft_codec.py','test_direct_export.cjs']:shutil.copy2(ROOT/name,work/name)
  (work/'acorn').mkdir(exist_ok=True)
  shutil.copy2(ROOT/'acorn.js',work/'acorn/acorn.js');shutil.copy2(ROOT/'LICENSE-ACORN',work/'acorn/LICENSE')
  payload=work/'build_inputs/runtime_payload';payload.mkdir(parents=True,exist_ok=True)
@@ -35,7 +35,7 @@ def main():
  resources=payload/'Resources/Core/Resources';resources.mkdir(parents=True,exist_ok=True)
  run([sys.executable,'work/build_codec.py','--zig',args.zig,'--output',str(resources/'jydraft_bridge.dll')])
  run([sys.executable,'work/test_draft_codec.py',str(resources/'jydraft_bridge.dll')])
- run([node,'work/test_export_start.cjs']);run([node,'work/test_export_policies.cjs']);run([node,'work/test_cover_frontend.cjs']);run([node,'work/test_install_frontend.cjs'])
+ run([node,'work/test_direct_export.cjs']);run([node,'work/test_export_start.cjs']);run([node,'work/test_export_policies.cjs']);run([node,'work/test_cover_frontend.cjs']);run([node,'work/test_install_frontend.cjs'])
  run([sys.executable,'work/build_runtime.py'])
  csc=str(Path(os.environ.get('WINDIR','C:/Windows'))/'Microsoft.NET/Framework64/v4.0.30319/csc.exe')
  probe=stage/'PreviewSmoke.exe'

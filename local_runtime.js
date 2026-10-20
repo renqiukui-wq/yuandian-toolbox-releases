@@ -16,9 +16,9 @@ async function XYLocal_api(action,data={}){
 const XYLocal_ControlComponent={props:["params","h"],data(){return{pending:false,error:null}},mounted(){this.error=XYExport_error;this._errorListener=()=>this.error=XYExport_error;window.addEventListener("xy-export-error",this._errorListener);this.pending=XYDesign_startPending;this._pendingListener=e=>{this.pending=e.detail};window.addEventListener("xy-export-pending",this._pendingListener)},beforeUnmount(){window.removeEventListener("xy-export-error",this._errorListener);window.removeEventListener("xy-export-pending",this._pendingListener)},render(){return XYLocal_controlBody(this.params,this.h,this.pending,this.error)}};
 function XYLocal_control(params,l,createVNode){return createVNode(XYLocal_ControlComponent,{params,h:l});}
 function XYLocal_controlBody(params,h,pending,error=null){
- const count=params.selectedDrafts?.length||0,busy=!!params.collectBusy||!!params.timelineLoading||pending,mode=params.sizeMode||"original";
+ const count=params.selectedDrafts?.length||0,busy=!!params.timelineLoading||pending,mode=params.sizeMode||"original";
  const options=[["original","保持原尺寸","沿用草稿设置"],["auto720","自动 720P","短边 720 · 跟随横竖方向"],["auto1080","自动 1080P","短边 1080 · 跟随横竖方向"],["auto1440","自动 2K","短边 1440 · 常见比例 2560×1440"],["auto2160","自动 4K","短边 2160 · 常见比例 3840×2160"]];
- const message=params.timelineLoading?"正在读取所选草稿的时间线…":params.collectMessage||(count?"已选 "+count+" 个草稿，文件名沿用对应时间线。":"先选择要处理的草稿，再设置输出方式。");
+ const message=params.timelineLoading?"正在读取所选草稿的时间线…":(count?"已选 "+count+" 个草稿，直接使用所选目录，文件名沿用对应时间线。":"先选择要处理的草稿，再设置输出方式。");
  return h("section",{class:"xy-export-panel","aria-label":"导出设置"},[
   error?XYExport_errorPanel(error,h):null,
   h("div",{class:"xy-panel-top"},[h("div",null,[h("h2",{class:"xy-panel-title"},"导出设置"),h("p",{class:"xy-panel-subtitle"},"每条视频自动识别横竖与比例；尺寸一致时跳过尺寸转换。")]),h("span",{class:"xy-count-badge"},count?"已选 "+count+" 个草稿":"等待选择草稿")]),
@@ -26,27 +26,19 @@ function XYLocal_controlBody(params,h,pending,error=null){
   h("div",{class:"xy-mode-note"},mode==="original"?(params.setCover==="random"?"保持原尺寸并生成随机封面；封面处理仍需编码。":"保留原尺寸，不进行尺寸转码。") : "逐条按比例缩放，不裁切、不补边；输出尺寸已经匹配时直接交付，跳过尺寸转码。随机封面仍需处理。请选择自定义保存路径，完成后只保留最终视频。"),
   h("label",{class:"xy-check-label",style:{marginBottom:"14px"}},[h("input",{type:"checkbox",checked:!!params.removeSilence,disabled:busy,onChange:e=>{params.removeSilence=e.target.checked;localStorage.setItem("xy-remove-silence",String(e.target.checked))}}),"导出后删除静音并自动排齐（逐条视频检测）"]),
   params.removeSilence?h("p",{class:"xy-mode-note"},"采用 -40 dB / 0.5 秒检测，切口两侧各保留 80 毫秒；首音轨无声超过 80% 时停止该文件，避免误删。需要自定义保存路径。无需删除的文件直接进入尺寸判断。"):null,
-  h("div",{class:"xy-material-row"},[h("label",{class:"xy-check-label"},[h("input",{type:"checkbox",checked:!!params.collectMaterials,disabled:busy,onChange:e=>{params.collectMaterials=e.target.checked;localStorage.setItem("xy-copy-materials",String(e.target.checked))}}),"导出前复制全部素材到草稿"]),h("div",{class:"xy-button-row"},[h("button",{type:"button",class:"xy-btn",disabled:busy||!count,onClick:()=>{XYLocal_collect(params).catch(()=>{})}},params.collectBusy?[h("span",{class:"xy-spinner","aria-hidden":"true"}),"正在复制素材"]:"立即复制所选草稿素材"),h("button",{type:"button",class:"xy-btn primary",disabled:busy||!count,onClick:XYDesign_startExport},pending?[h("span",{class:"xy-spinner","aria-hidden":"true"}),"正在准备"]:"开始导出")])]),
-  h("div",{class:"xy-status "+(params.collectError?"error":params.collectMessage&&!params.collectBusy?"success":""),role:"status","aria-live":"polite"},[h("span",{class:params.collectBusy?"xy-spinner":"xy-status-dot","aria-hidden":"true"}),h("span",null,message)]),
-  h("details",{class:"xy-material-help"},[h("summary",null,"素材整理与备份说明"),h("p",null,"复制前，请先在剪映中保存并关闭所选草稿。程序会整理所有时间线的外部素材，校验文件并保留原配置备份；遇到缺失素材会提示具体位置。")])
+  h("div",{class:"xy-status",role:"status","aria-live":"polite"},[h("span",{class:params.timelineLoading?"xy-spinner":"xy-status-dot","aria-hidden":"true"}),h("span",null,message)]),
+  h("div",{class:"xy-button-row"},[h("button",{type:"button",class:"xy-btn primary",disabled:busy||!count,onClick:XYDesign_startExport},pending?[h("span",{class:"xy-spinner","aria-hidden":"true"}),"正在准备"]:"开始导出")])
  ]);
 }
-async function XYLocal_collect(params){
- if(params.collectBusy)throw Error("素材复制正在进行中。");
- if(!params.selectedDrafts?.length){params.collectMessage="请先选择需要复制素材的草稿。";return false;}
- params.collectBusy=true;params.collectError=false;params.collectMessage="正在检查所选草稿的全部素材…";
- try{
-  const task=await XYLocal_api("collect/start",{drafts:[...params.selectedDrafts]});
-  while(true){const s=await XYLocal_api("collect/status",{id:task.id});params.collectMessage=s.message||"正在复制素材…";if(s.state==="completed")return true;if(s.state==="failed")throw Error(s.error||s.message);await new Promise(r=>setTimeout(r,500));}
- }catch(e){params.collectError=true;params.collectMessage=e.message;throw e;}finally{params.collectBusy=false;}
-}
 async function XYLocal_startCore(method,params){
+ // Ignore obsolete copy settings even if an older saved form restores them.
+ // Source draft paths remain the user's selected paths throughout export.
+ params={...params};
+ for(const key of ["collectMaterials","collectBusy","collectMessage","collectError"])delete params[key];
  if(typeof XYBreath!=="undefined"&&XYBreath.busy)throw Error("批量删气口正在进行，请等待完成。");
  if(XYLocal_job)throw Error("上一次尺寸处理尚未完成，请等待后再启动。");
- if(params.collectBusy)throw Error("请等待素材复制完成后再导出。");
  XYExport_stage="检查已有导出任务";
  const previous=await window.go.main.App.GetQtInspectorExportProgress();if(previous?.running)throw Error("剪映中已有导出任务正在运行，请等它完成后再开始。");
- XYExport_stage="复制草稿素材";if(params.collectMaterials)await XYLocal_collect(params);
  XYExport_stage="读取所选时间线";
  let outputNames=[];
  if(method==="BatchExportMultiTimeline"){

@@ -86,7 +86,7 @@ relabel(ast);
 for(const name of ['ExportDraft','ExportMultiTimeline']){
  const c=components[name];const part=source.slice(c.start,c.end);
  const marker='fps:"30fps"';const pos=part.indexOf(marker);if(pos<0)throw Error('No settings '+name);
- add(c.start+pos+marker.length,c.start+pos+marker.length,',sizeMode:XYLocal_sizeMode(localStorage.getItem("xy-size-mode")),removeSilence:localStorage.getItem("xy-remove-silence")==="true",collectMaterials:localStorage.getItem("xy-copy-materials")==="true",collectBusy:false,collectMessage:""','persist size and material settings '+name);
+ add(c.start+pos+marker.length,c.start+pos+marker.length,',sizeMode:XYLocal_sizeMode(localStorage.getItem("xy-size-mode")),removeSilence:localStorage.getItem("xy-remove-silence")==="true"','persist size and silence settings '+name);
  const render=name==='ExportDraft'?'o(et,null,{default:i(()=>[':'o(Tt,null,{default:i(()=>[';
  const rp=part.indexOf(render);if(rp<0)throw Error('No render '+name);
  add(c.start+rp+render.length,c.start+rp+render.length,'XYLocal_control(d.value,l,o),','render size '+name);
