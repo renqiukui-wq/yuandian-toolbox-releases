@@ -38,6 +38,8 @@ wrap('la','return Promise.resolve({name:"本地功能",details:"本地版：全�
 wrap('CA','return XYLocal_start("BatchExportDraft",e);');
 wrap('EA','return XYLocal_start("BatchExportMultiTimeline",e);');
 wrap('Hf','return XYLocal_progress();');
+wrap('Gm','return XYExport_formatError(e,true);');
+wrap('Cr','return XYExport_formatError(e,false);');
 wrap('dB','if(XYBreath.busy||XYLocal_job)return Promise.reject(new Error("已有处理任务，请等待完成。"));XYBreath.busy=true;return window.go.main.App.RemoveBreath(e).finally(()=>{XYBreath.busy=false});');
 wrap('gA','return Promise.reject(new Error("用户反馈功能已移除。"));');
 const advice=components.AdvicePage;
@@ -133,6 +135,12 @@ const breathPart=source.slice(breath.start,breath.end),breathRender='o(ln,{expan
 const breathPos=breathPart.indexOf(breathRender);if(breathPos<0)throw Error('Missing breath render');
 add(breath.start+breathPos,breath.start+breathPos,'XYBreath_toolbar(l,o,{busy:Wu.value||ma.value,selected:!!Ne.value.refDraftPath,ready:c.value.selectArea&&$.value.length>0,preset:(noise,min)=>{h.value={...h.value,noiseDb:noise,minDuration:min}},refresh:async()=>{De.clear();await ga(Ne.value.refDraftPath);await Ya(true);await Xa()},draft:async()=>{Pe.value="draft";Ne.value.exportMethod="merged";await Re()}}),','add quick and batch breath controls');
 
+for(const [name,startName] of [["ExportDraft","z"],["ExportMultiTimeline","Q"]]){
+ const notify=variables.find(v=>v.start>components[name].start&&v.end<components[name].end&&v.id.name===(name==="ExportDraft"?"Ce":"xe"));if(notify)add(notify.init.body.start,notify.init.body.end,source.slice(notify.init.body.start,notify.init.body.end).replace(/type:([A-Za-z_$][\w$]*)}/,"type:$1,grouping:true,duration:5000}"),"group repeated export notifications");
+ const component=components[name],start=variables.find(v=>v.start>component.start&&v.end<component.end&&v.id.name===startName);
+ add(start.init.body.start+1,start.init.body.start+1,'if(XYExport_blocked())return;','ignore duplicate export clicks '+name);
+ for(const call of calls){if(call.start<component.start||call.end>component.end)continue;const props=call.arguments[1];if(props?.type==='ObjectExpression'&&props.properties.some(p=>p.key?.name==='onClick'&&p.value?.name===startName)&&props.properties.some(p=>p.key?.name==='class'&&p.value?.value==='btn'))add(call.start,call.end,'XYExport_startButton(l,o,'+startName+','+JSON.stringify(name==='ExportDraft'?'批量导出视频':'批量导出多时间线')+')','disable native export button during preparation');}
+}
 patches.sort((a,b)=>a.start-b.start||a.end-b.end);
 for(let i=1;i<patches.length;i++)if(patches[i].start<patches[i-1].end)throw Error('Overlapping patches '+JSON.stringify(patches.slice(i-1,i+1)));
 let out=source;for(const p of [...patches].reverse())out=out.slice(0,p.start)+p.text+out.slice(p.end);
@@ -143,7 +151,7 @@ const theme=fs.readFileSync('work/studio_theme.css','utf8').replace(/\/\*[\s\S]*
 const inject='const XYDesign_style=document.createElement("style");XYDesign_style.id="xy-studio-theme";XYDesign_style.textContent='+JSON.stringify(theme)+';document.head.appendChild(XYDesign_style);\n';
 const release=JSON.parse(fs.readFileSync('work/release_config.json','utf8'));
 if(!/^\d+\.\d+\.\d+$/.test(release.version))throw Error('Invalid release version');
-out='const XYRelease='+JSON.stringify({version:release.version})+';\n'+fs.readFileSync('work/update_ui.js','utf8')+'\n'+inject+fs.readFileSync('work/studio_design.js','utf8')+'\n'+fs.readFileSync('work/local_runtime.js','utf8')+'\n'+fs.readFileSync('work/breath_tools.js','utf8')+'\n'+fs.readFileSync('work/draft_preview.js','utf8')+'\n'+out;
+out='const XYRelease='+JSON.stringify({version:release.version})+';\n'+fs.readFileSync('work/update_ui.js','utf8')+'\n'+inject+fs.readFileSync('work/export_diagnostics.js','utf8')+'\n'+fs.readFileSync('work/studio_design.js','utf8')+'\n'+fs.readFileSync('work/local_runtime.js','utf8')+'\n'+fs.readFileSync('work/breath_tools.js','utf8')+'\n'+fs.readFileSync('work/draft_preview.js','utf8')+'\n'+out;
 
 // Re-encode string literals without redundant Unicode escapes; preserve values via the parser.
 const packedAst=acorn.parse(out,{ecmaVersion:'latest',sourceType:'module'}),strings=[];

@@ -2,7 +2,7 @@
 from pathlib import Path
 import argparse, hashlib, json, os, shutil, subprocess, sys
 ROOT=Path(__file__).resolve().parent
-SOURCES=['LocalLauncher.cs','SilenceProcessor.cs','breath_tools.js','test_export_policies.cjs','ExportSmoke.cs','MaterialCollector.cs','DraftPreview.cs','UpdateService.cs','UpdateInstaller.cs','SingleFileBootstrap.cs','AutoUpdateWorker.cs','local_runtime.js','update_ui.js','studio_design.js','draft_preview.js','studio_theme.css','branded_index.html','patch_frontend.cjs','build_runtime.py','build_binary.py','build_single_file.py','extract_assets.py','verify_build.py','release_config.json','test_cover_frontend.cjs','test_install_frontend.cjs','PreviewSmoke.cs']
+SOURCES=['export_diagnostics.js','test_export_start.cjs','LocalLauncher.cs','SilenceProcessor.cs','breath_tools.js','test_export_policies.cjs','ExportSmoke.cs','MaterialCollector.cs','DraftPreview.cs','UpdateService.cs','UpdateInstaller.cs','SingleFileBootstrap.cs','AutoUpdateWorker.cs','local_runtime.js','update_ui.js','studio_design.js','draft_preview.js','studio_theme.css','branded_index.html','patch_frontend.cjs','build_runtime.py','build_binary.py','build_single_file.py','extract_assets.py','verify_build.py','release_config.json','test_cover_frontend.cjs','test_install_frontend.cjs','PreviewSmoke.cs']
 ORIGINAL_SHA256='016012b4a179f428cc90e2b2520c761606bb773c572803abd0fb6f64485785ee'
 RESOURCES=['bravo.exe','f2.exe','ffmpeg.exe','MediaInfo.exe','qcore_ext.dll','uptool.exe']
 def digest(p):return hashlib.sha256(p.read_bytes()).hexdigest()
@@ -33,7 +33,7 @@ def main():
   result=subprocess.run(command,cwd=stage,capture_output=True,creationflags=subprocess.CREATE_NO_WINDOW)
   print(result.stdout.decode("utf-8",errors="replace"),end="");print(result.stderr.decode("utf-8",errors="replace"),end="")
   result.check_returncode()
- run([node,'work/test_export_policies.cjs']);run([node,'work/test_cover_frontend.cjs']);run([node,'work/test_install_frontend.cjs'])
+ run([node,'work/test_export_start.cjs']);run([node,'work/test_export_policies.cjs']);run([node,'work/test_cover_frontend.cjs']);run([node,'work/test_install_frontend.cjs'])
  run([sys.executable,'work/build_runtime.py'])
  csc=str(Path(os.environ.get('WINDIR','C:/Windows'))/'Microsoft.NET/Framework64/v4.0.30319/csc.exe')
  probe=stage/'PreviewSmoke.exe'

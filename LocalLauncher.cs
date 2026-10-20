@@ -152,8 +152,14 @@ class LocalLauncher {
     static void SaveStatus(Job j) {
         try { lock (Gate) { File.WriteAllText(Path.Combine(Root,"Resources","尺寸处理状态.json"),Json().Serialize(State(j)),Encoding.UTF8); } } catch { }
     }
+    static string ExportDiagnostic(Dictionary<string,object> body) {
+        string folder=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"元点剪辑批量工具箱","logs");Directory.CreateDirectory(folder);
+        string path=Path.Combine(folder,"export-start.log");var record=new Dictionary<string,object>();foreach(string key in new[]{"time","stage","method","message","settings"})if(body.ContainsKey(key))record[key]=body[key];record["recordedAt"]=DateTime.UtcNow.ToString("o");
+        string text=Json().Serialize(record);if(text.Length>32000)throw new Exception("错误详情过长");lock(Gate){if(File.Exists(path)&&new FileInfo(path).Length>2*1024*1024){string old=path+".1";if(File.Exists(old))File.Delete(old);File.Move(path,old);}File.AppendAllText(path,text+Environment.NewLine,new UTF8Encoding(false));}return path;
+    }
     static object Route(string url, Dictionary<string,object> body) {
         if (!body.ContainsKey("token") || Convert.ToString(body["token"]) != Token) throw new Exception("本地请求校验失败");
+        if(url == "/diagnostics/export")return new{logFile=ExportDiagnostic(body)};
         if(url == "/preview")return DraftPreview.Get(body.ContainsKey("draft")?Convert.ToString(body["draft"]):"");
         if(url == "/updates/info")return UpdateService.Info();
         if(url == "/updates/check")return UpdateService.Check();
@@ -219,7 +225,7 @@ class LocalLauncher {
                         if(request[0]!="POST")throw new Exception("只支持本地 POST 请求");
                         byte[] payload=new byte[length]; int read=0; while(read<length){int n=stream.Read(payload,read,length-read);if(n==0)throw new IOException("请求未完成");read+=n;}
                         try { result=Route(request[1],Json().Deserialize<Dictionary<string,object>>(Encoding.UTF8.GetString(payload))); }
-                        catch(Exception e){result=new{error=e.Message};}
+                        catch(Exception e){result=new{error=e.Message};if(request[1]=="/begin"||request[1]=="/finish")try{ExportDiagnostic(new Dictionary<string,object>{{"stage",request[1]},{"message",e.Message}});}catch{}}
                     }
                     byte[] data=Encoding.UTF8.GetBytes(Json().Serialize(result));
                     string response="HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nAccess-Control-Allow-Private-Network: true\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: "+data.Length+"\r\n\r\n";

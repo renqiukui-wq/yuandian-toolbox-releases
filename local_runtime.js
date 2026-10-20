@@ -13,13 +13,14 @@ async function XYLocal_api(action,data={}){
  catch(e){throw Error("本地处理服务尚未连接。请关闭程序后重新打开元点剪辑批量工具箱.exe。");}
  if(r.error)throw Error(r.error);return r;
 }
-const XYLocal_ControlComponent={props:["params","h"],data(){return{pending:false}},mounted(){this.pending=XYDesign_startPending;this._pendingListener=e=>{this.pending=e.detail};window.addEventListener("xy-export-pending",this._pendingListener)},beforeUnmount(){window.removeEventListener("xy-export-pending",this._pendingListener)},render(){return XYLocal_controlBody(this.params,this.h,this.pending)}};
+const XYLocal_ControlComponent={props:["params","h"],data(){return{pending:false,error:null}},mounted(){this.error=XYExport_error;this._errorListener=()=>this.error=XYExport_error;window.addEventListener("xy-export-error",this._errorListener);this.pending=XYDesign_startPending;this._pendingListener=e=>{this.pending=e.detail};window.addEventListener("xy-export-pending",this._pendingListener)},beforeUnmount(){window.removeEventListener("xy-export-error",this._errorListener);window.removeEventListener("xy-export-pending",this._pendingListener)},render(){return XYLocal_controlBody(this.params,this.h,this.pending,this.error)}};
 function XYLocal_control(params,l,createVNode){return createVNode(XYLocal_ControlComponent,{params,h:l});}
-function XYLocal_controlBody(params,h,pending){
+function XYLocal_controlBody(params,h,pending,error=null){
  const count=params.selectedDrafts?.length||0,busy=!!params.collectBusy||!!params.timelineLoading||pending,mode=params.sizeMode||"original";
  const options=[["original","保持原尺寸","沿用草稿设置"],["auto720","自动 720P","短边 720 · 跟随横竖方向"],["auto1080","自动 1080P","短边 1080 · 跟随横竖方向"],["auto1440","自动 2K","短边 1440 · 常见比例 2560×1440"],["auto2160","自动 4K","短边 2160 · 常见比例 3840×2160"]];
  const message=params.timelineLoading?"正在读取所选草稿的时间线…":params.collectMessage||(count?"已选 "+count+" 个草稿，文件名沿用对应时间线。":"先选择要处理的草稿，再设置输出方式。");
  return h("section",{class:"xy-export-panel","aria-label":"导出设置"},[
+  error?XYExport_errorPanel(error,h):null,
   h("div",{class:"xy-panel-top"},[h("div",null,[h("h2",{class:"xy-panel-title"},"导出设置"),h("p",{class:"xy-panel-subtitle"},"每条视频自动识别横竖与比例；尺寸一致时跳过尺寸转换。")]),h("span",{class:"xy-count-badge"},count?"已选 "+count+" 个草稿":"等待选择草稿")]),
   h("div",{class:"xy-size-options",role:"radiogroup","aria-label":"导出尺寸"},options.map(([value,title,sub])=>h("button",{type:"button",role:"radio",class:"xy-size-option","aria-label":title,"aria-checked":mode===value,tabindex:mode===value?0:-1,disabled:busy,onClick:()=>{params.sizeMode=value;localStorage.setItem("xy-size-mode",value)},onKeydown:e=>{if(!["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(e.key))return;e.preventDefault();const delta=["ArrowLeft","ArrowUp"].includes(e.key)?-1:1,next=options[(options.findIndex(x=>x[0]===mode)+delta+options.length)%options.length][0];params.sizeMode=next;localStorage.setItem("xy-size-mode",next);e.currentTarget.parentElement.querySelector('[aria-label="'+options.find(x=>x[0]===next)[1]+'"]').focus();}},[h("span",{class:"xy-size-icon "+value,"aria-hidden":"true"}),h("span",null,[h("strong",null,title),h("small",null,sub)])]))),
   h("div",{class:"xy-mode-note"},mode==="original"?(params.setCover==="random"?"保持原尺寸并生成随机封面；封面处理仍需编码。":"保留原尺寸，不进行尺寸转码。") : "逐条按比例缩放，不裁切、不补边；输出尺寸已经匹配时直接交付，跳过尺寸转码。随机封面仍需处理。请选择自定义保存路径，完成后只保留最终视频。"),
@@ -43,7 +44,10 @@ async function XYLocal_startCore(method,params){
  if(typeof XYBreath!=="undefined"&&XYBreath.busy)throw Error("批量删气口正在进行，请等待完成。");
  if(XYLocal_job)throw Error("上一次尺寸处理尚未完成，请等待后再启动。");
  if(params.collectBusy)throw Error("请等待素材复制完成后再导出。");
- if(params.collectMaterials)await XYLocal_collect(params);
+ XYExport_stage="检查已有导出任务";
+ const previous=await window.go.main.App.GetQtInspectorExportProgress();if(previous?.running)throw Error("剪映中已有导出任务正在运行，请等它完成后再开始。");
+ XYExport_stage="复制草稿素材";if(params.collectMaterials)await XYLocal_collect(params);
+ XYExport_stage="读取所选时间线";
  let outputNames=[];
  if(method==="BatchExportMultiTimeline"){
   const groups=await XYDesign_map(params.selections||[],async group=>{const timelines=await window.go.main.App.ListDraftTimelines(group.draftPath);return (timelines||[]).filter(t=>group.timelineIds.includes(t.id)).map(t=>String(t.name||"timeline").trim().replace(/[<>:"/\\|?*\x00-\x1f]/g,"_"));});const names=groups.flat();outputNames=names;
@@ -60,13 +64,15 @@ async function XYLocal_startCore(method,params){
   if(!["original","auto720","auto1080","auto1440","auto2160"].includes(mode))throw Error("请选择有效的导出尺寸。");
   if(!params.exportPath)throw Error("选择尺寸处理或随机封面时，请先选择自定义保存路径。");
   if(params.shutdown==="yes")throw Error("视频处理完成前不能自动关机，请关闭自动关机后导出。");
-  XYLocal_job=await XYLocal_api("begin",{mode,coverMode,removeSilence:!!params.removeSilence,names:outputNames,folder:params.exportPath});
+  XYExport_stage="准备视频处理目录";XYLocal_job=await XYLocal_api("begin",{mode,coverMode,removeSilence:!!params.removeSilence,names:outputNames,folder:params.exportPath});
   params={...params,exportPath:XYLocal_job.folder,setCover:coverMode==="random"?"no":params.setCover};
  }
+ XYExport_stage="启动剪映导出组件";
  try{const result=await window.go.main.App[method](params);if(result===false)throw Error("导出任务未启动，请检查草稿和导出设置。");return result}
  catch(e){if(XYLocal_job){await XYLocal_api("cancel",{id:XYLocal_job.id}).catch(()=>{});XYLocal_job=null}throw e}
 }
 async function XYLocal_progress(){
+ if(typeof XYExport_preparing!=="undefined"&&XYExport_preparing)return{running:true,phase:"starting",message:XYExport_stage||"正在准备导出",currentDraft:"",progress:0,completed:0,total:0,error:""};
  const raw=await window.go.main.App.GetQtInspectorExportProgress();
  if(!XYLocal_job)return raw;
  if(["failed","cancelled"].includes(raw.phase)){await XYLocal_api("cancel",{id:XYLocal_job.id}).catch(()=>{});XYLocal_job=null;return raw;}
