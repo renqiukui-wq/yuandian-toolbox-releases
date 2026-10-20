@@ -1,6 +1,6 @@
 # 元点剪辑批量工具箱
 
-多草稿、多时间线批量处理工具的开源定制工程。Windows 应用版本：**v1.0.6**；另提供独立的 **macOS 0.1.1 预览版**。
+多草稿、多时间线批量处理工具的开源定制工程。Windows 应用版本：**v1.0.7**；另提供独立的 **macOS 0.1.1 预览版**。
 
 **开源范围：** 本仓库公开我们编写的界面扩展、预览服务、素材整理、更新器、单文件启动器及补丁/构建脚本，采用 MIT 许可证。原始 Go/Wails 主程序的完整源码不在本仓库中，完整应用仍依赖使用者自行提供的兼容原始程序及第三方文件。详见 [开源范围与外部依赖](THIRD_PARTY.md)。
 
@@ -23,7 +23,7 @@ Mac 0.1.1 改善了逐项预览、缺图重试、大素材复制取消、视频�
 | --- | --- |
 | LocalLauncher.cs | 本地服务与视频尺寸、随机封面处理 |
 | DraftPreview.cs / draft_preview.js | 草稿预览、放大、按需加载和自动刷新 |
-| MaterialCollector.cs | 草稿素材整理与读写桥接 |
+| MaterialCollector.cs / draft_codec.c | 草稿素材整理与独立草稿读写 |
 | UpdateService.cs / UpdateInstaller.cs / AutoUpdateWorker.cs | 版本检查、下载校验、替换和重启 |
 | SingleFileBootstrap.cs | 单文件打包程序的解包校验与启动 |
 | local_runtime.js / studio_design.js / studio_theme.css / update_ui.js | 界面、交互与本地服务接入 |
@@ -43,7 +43,7 @@ cd yuandian-toolbox-releases
 
 ## 构建与验证
 
-环境要求：Windows x64、Python 3.9+、Node.js 18+、.NET Framework 4.x 的 64 位 C# 编译器（csc.exe）。构建脚本只使用 Python 标准库；Acorn 8.15.0 已连同其许可证放入仓库。
+环境要求：Windows x64、Python 3.9+、Node.js 18+、Zig 0.13.0、.NET Framework 4.x 的 64 位 C# 编译器（csc.exe）。构建脚本只使用 Python 标准库；Acorn 8.15.0 已连同其许可证放入仓库。
 
 不需要原始 EXE 即可检查公开的辅助程序和测试：
 
@@ -56,11 +56,11 @@ python build.py --check
 完整打包需要自行提供：
 
 - 原始安装目录，包含“小映批量助手.exe”和 Resources 下的 bravo.exe、f2.exe、ffmpeg.exe、MediaInfo.exe、qcore_ext.dll、uptool.exe。
-- 与原始程序兼容的 jydraft_bridge.dll。
+- 草稿读写 DLL 从本仓库 draft_codec.c 编译，使用 Windows CNG，不再需要另行提供旧桥接 DLL。
 - 支持的原始 EXE SHA-256：`016012b4a179f428cc90e2b2520c761606bb773c572803abd0fb6f64485785ee`。脚本会拒绝其他二进制版本，避免错误补丁。
 
 ```powershell
-python build.py --original-dir "D:\BuildInputs\original" --bridge-dll "D:\BuildInputs\jydraft_bridge.dll"
+python build.py --original-dir "D:\BuildInputs\original" --zig "D:\Tools\zig\zig.exe"
 ```
 
 Node 不在 PATH 时添加 `--node "C:\path\to\node.exe"`。构建中间文件在 `.build`，最终单文件程序在 `outputs\元点剪辑批量工具箱.exe`。输入文件只读；脚本不会替换正在使用的已安装程序。
@@ -97,6 +97,13 @@ Fork 后请修改 `release_config.json` 中的版本、GitHub 发布仓库和附
 所有草稿选择列表显示缩略图，点击“放大”可查看封面。优先读取剪映保存的草稿封面；缺少封面时尝试从素材生成识别图，并标注“素材画面”。素材画面不代表完整时间线效果。
 
 可见列表每 15 秒检查封面，切回工具箱或刷新列表时也会检查。封面内容改变后自动更新，不需要重启。请先在剪映保存修改；尚未保存的编辑、剪映尚未生成的新封面无法显示。素材缺失或无法读取时显示提示，可点击重试。预览只读取草稿，不改写草稿内容，不在导出目录生成图片。
+
+## 草稿读写兼容修复（Windows v1.0.7）
+
+- 修复安装剪映 11.7 后旧读写桥接返回错误 -3，导致素材整理及后续导出无法启动的问题。
+- 使用独立的 Windows CNG 草稿编解码组件，同时替换素材服务与原导出内核内置组件；使用新的缓存文件名，防止沿用旧 DLL。
+- 保留文件认证校验、写入前变化检测及失败回滚；遇到不支持或损坏的文件，报告具体文件，不继续写入。
+- 已在故障草稿副本上验证 15 个加密文档、13 条时间线及 21 个外部素材复制，并用独立实现交叉检查读写结果。原草稿未修改。尚未验证完整剪映视频渲染流程，这些结果不等于所有剪映版本和草稿格式均兼容。
 
 ## 导出启动修复（Windows v1.0.6）
 

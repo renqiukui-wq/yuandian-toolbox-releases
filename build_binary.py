@@ -28,8 +28,20 @@ for patch in native_patches:
  assert bytes(b[o:o+len(expected)])==expected,'Unexpected native function bytes'
  assert len(expected)==len(replacement);b[o:o+len(expected)]=replacement
 Path('work/native_patch_manifest.json').write_text(json.dumps(native_patches,indent=2),encoding='utf-8')
+# Replace the old editor-dependent bridge in its existing Go byte-slice span.
+# Preserve the allocation length; a PE DLL permits zero overlay bytes.
+codec=Path('work/build_inputs/runtime_payload/Resources/Core/Resources/jydraft_bridge.dll').read_bytes()
+offset,length=24561376,15441121
+assert hashlib.sha256(b[offset:offset+length]).hexdigest()=='f5b940fad5508e692f5d8b5869f4350753d8e4995252c1bbd0c5a04dfe89b416'
+assert codec[:2]==b'MZ' and len(codec)<length
+b[offset:offset+length]=codec+b'\0'*(length-len(codec))
+cache_offsets=[12024518,12285823]
+for pos in cache_offsets:
+ assert b[pos:pos+18]==b'jydraft_bridge.dll'
+ b[pos:pos+18]=b'ydcodec_bridge.dll'
+Path('work/codec_patch_manifest.json').write_text(json.dumps({'offset':offset,'length':length,'codec_length':len(codec),'sha256':hashlib.sha256(codec).hexdigest(),'cache_offsets':cache_offsets}),encoding='utf-8')
 out=Path('work/build_inputs/runtime_payload/Resources/Core');out.mkdir(parents=True,exist_ok=True)
 (out/'元点剪辑批量工具箱_界面.exe').write_bytes(b)
-Path('work/build_evidence.json').write_text(json.dumps({'original_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),'modified_sha256':hashlib.sha256(b).hexdigest(),'original_bytes':len(b),'changed_region':'embedded frontend JS and branded HTML + embed lengths/hashes + PE checksum + 9 bytes in timelineOutputName','source_not_modified':True},ensure_ascii=False,indent=2),encoding='utf-8')
+Path('work/build_evidence.json').write_text(json.dumps({'original_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),'modified_sha256':hashlib.sha256(b).hexdigest(),'original_bytes':len(b),'changed_region':'embedded frontend JS and branded HTML + embed lengths/hashes + PE checksum + 9 bytes in timelineOutputName + embedded draft codec and cache filename','source_not_modified':True},ensure_ascii=False,indent=2),encoding='utf-8')
 print('Built executable; original unchanged; runtime payload UI updated.')
 

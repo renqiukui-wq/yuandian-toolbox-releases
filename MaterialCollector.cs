@@ -98,8 +98,9 @@ static class MaterialCollector {
             foreach(string file in Documents(draft)){
                 byte[] raw=File.ReadAllBytes(file);string text=Encoding.UTF8.GetString(raw).TrimStart('\uFEFF');object data;bool encrypted=false;
                 try{data=Json().DeserializeObject(text);}catch{
-                    if(Path.GetFileName(file)!="draft_content.json"&&Path.GetFileName(file)!="draft_meta_info.json")continue;
-                    text=DraftCrypto.Convert(text,false);data=Json().DeserializeObject(text);encrypted=true;
+                    if(Path.GetFileName(file)!="draft_content.json"&&Path.GetFileName(file)!="draft_meta_info.json"&&Path.GetFileName(file)!="draft_info.json")continue;
+                    try{text=DraftCrypto.Convert(text,false);data=Json().DeserializeObject(text);encrypted=true;}
+                    catch(Exception e){throw new Exception("无法读取草稿文件 "+file+"："+e.Message,e);}
                 }
                 Transform(data,"",false,draft,assets,true);
                 docs.Add(new Document{file=file,text=text,original=raw,signature=Hash(raw),data=data,encrypted=encrypted});
@@ -161,15 +162,12 @@ static class DraftCrypto {
         if(Ready)return;
         string bridge=Path.Combine(LocalLauncher.RuntimeResources,"jydraft_bridge.dll");
         IntPtr lib=LoadLibrary(bridge);if(lib==IntPtr.Zero)throw new Exception("无法加载草稿读写组件，错误 "+Marshal.GetLastWin32Error());
-        string apps=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"JianyingPro","Apps");
-        string install=Directory.Exists(apps)?Directory.GetDirectories(apps).Where(p=>File.Exists(Path.Combine(p,"videoeditor.dll"))).OrderByDescending(p=>p,StringComparer.OrdinalIgnoreCase).FirstOrDefault():null;
-        if(install==null)throw new Exception("未找到本机剪映的 videoeditor.dll，无法完整处理加密草稿。");
-        int result;string previousDirectory=Environment.CurrentDirectory;
-        try{result=Proc<Init>(lib,"jydraft_init")(Utf8(install));}finally{Environment.CurrentDirectory=previousDirectory;}
+        // The bundled codec uses Windows CNG, independent of the installed editor.
+        int result=Proc<Init>(lib,"jydraft_init")(Utf8(""));
         if(result!=0)throw new Exception("草稿读写组件初始化失败，错误 "+result);
         Decode=Proc<Codec>(lib,"jydraft_decrypt");Encode=Proc<Codec>(lib,"jydraft_encrypt");Release=Proc<Free>(lib,"jydraft_free_string");Ready=true;
     }
-    public static string Convert(string text,bool encrypt){lock(Gate){Ensure();int error;IntPtr value=(encrypt?Encode:Decode)(Utf8(text),out error);if(value==IntPtr.Zero)throw new Exception("草稿读写失败，错误 "+error);
+    public static string Convert(string text,bool encrypt){lock(Gate){Ensure();int error;IntPtr value=(encrypt?Encode:Decode)(Utf8(text),out error);if(value==IntPtr.Zero)throw new Exception(error==-12?"草稿内容校验失败，文件可能不完整或已损坏。":error==-11?"不支持的草稿文件格式，未修改原文件。":"草稿读写失败，错误 "+error);
         try{int length=0;while(length<64*1024*1024&&Marshal.ReadByte(value,length)!=0)length++;if(length==64*1024*1024)throw new Exception("草稿内容过大");byte[] raw=new byte[length];Marshal.Copy(value,raw,0,length);return Encoding.UTF8.GetString(raw);}finally{Release(value);}
     }}
 }

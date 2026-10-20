@@ -20,5 +20,17 @@ for i in range(struct.unpack_from('<H',b,pe+6)[0]):
    pos=patch['offset'];newbytes=bytes.fromhex(patch['replacement']);assert restored[pos:pos+len(newbytes)]==newbytes;restored[pos:pos+len(newbytes)]=bytes.fromhex(patch['expected'])
   assert a[raw:raw+rawsize]==restored[raw:raw+rawsize]
 assert hashlib.sha256(a).hexdigest()==json.loads(Path('work/build_evidence.json').read_text())['original_sha256']
-print('PASS: only the two declared native naming patches changed; patched JS, embedded length and hash verified; original EXE unchanged.')
+codec=json.loads(Path('work/codec_patch_manifest.json').read_text())
+start=codec['offset'];length=codec['length'];actual=codec['codec_length']
+assert hashlib.sha256(b[start:start+actual]).hexdigest()==codec['sha256']
+assert b[start+actual:start+length]==bytes(length-actual)
+restored=bytearray(b)
+ranges=[(js['offset'],js['length']),(js['entry']+24,24),(html_entry['offset'],html_entry['length']),(html_entry['entry']+24,24),(pe+24+64,4),(start,length)]
+for patch in json.loads(Path('work/native_patch_manifest.json').read_text()):ranges.append((patch['offset'],len(bytes.fromhex(patch['expected']))))
+for pos in codec['cache_offsets']:
+ assert b[pos:pos+18]==b'ydcodec_bridge.dll'
+ ranges.append((pos,18))
+for pos,count in ranges:restored[pos:pos+count]=a[pos:pos+count]
+assert restored==a,'Unexpected change outside declared regions'
+print('PASS: complete binary diff is limited to declared frontend, naming and codec regions; new cache filename and codec verified; original EXE unchanged.')
 Path('work/integrity.json').write_text(json.dumps({'passed':True,'original_unchanged':True,'embedded_assets_verified':True}),encoding='utf-8')
