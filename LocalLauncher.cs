@@ -160,6 +160,7 @@ class LocalLauncher {
     static object Route(string url, Dictionary<string,object> body) {
         if (!body.ContainsKey("token") || Convert.ToString(body["token"]) != Token) throw new Exception("本地请求校验失败");
         if(url == "/diagnostics/export")return new{logFile=ExportDiagnostic(body)};
+        if(url == "/export/default-path")return ExportEnvironment.Resolve(body.ContainsKey("appSource")?Convert.ToString(body["appSource"]):"");
         if(url == "/preview")return DraftPreview.Get(body.ContainsKey("draft")?Convert.ToString(body["draft"]):"");
         if(url == "/updates/info")return UpdateService.Info();
         if(url == "/updates/check")return UpdateService.Check();

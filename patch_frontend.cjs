@@ -78,7 +78,7 @@ for(const call of calls){
 }
 function relabel(n){
  if(!n||typeof n!=='object')return;
- const labels={"多个搜索关键词用 * 号分隔":"搜索草稿，关键词用 * 分隔","1.实用功能(免费)":"视频工具","2.剪映批量混剪":"批量混剪","3.剪映批量导出":"批量导出","4.剪映批量添加":"批量添加","5.素材批量处理":"素材处理","6.需求收集&意见反馈":"检查更新","7.激活软件":"关于本地版","激活软件":"关于本地版","正式版(":"本地版(","仅支持单一多时间线草稿":"支持多草稿、多时间线批量导出","请先选择上方草稿↑↑↑":"选择一个草稿，继续配置处理规则"," 请先选择上方草稿↑↑↑ ":"选择一个草稿，继续配置处理规则"};
+ const labels={"多个搜索关键词用 * 号分隔":"搜索草稿，关键词用 * 分隔","1.实用功能(免费)":"视频工具","2.剪映批量混剪":"批量混剪","3.剪映批量导出":"批量导出","4.剪映批量添加":"批量添加","5.素材批量处理":"素材处理","6.需求收集&意见反馈":"检查更新","7.激活软件":"关于本地版","激活软件":"关于本地版","正式版(":"本地版(","仅支持单一多时间线草稿":"支持多草稿、多时间线批量导出","请先选择上方草稿↑↑↑":"选择一个草稿，继续配置处理规则"," 请先选择上方草稿↑↑↑ ":"选择一个草稿，继续配置处理规则","正在准备临时草稿（同一次 Qt 会话导出全部时间线）":"正在启动剪映导出，直接使用所选草稿"};
  if(n.type==='Literal'&&Object.hasOwn(labels,n.value)&&!patches.some(p=>p.start<=n.start&&p.end>=n.end))add(n.start,n.end,JSON.stringify(labels[n.value]),'relabel local edition');
  for(const v of Object.values(n))if(Array.isArray(v))v.forEach(relabel);else if(v?.type)relabel(v);
 }
@@ -138,8 +138,85 @@ add(breath.start+breathPos,breath.start+breathPos,'XYBreath_toolbar(l,o,{busy:Wu
 for(const [name,startName] of [["ExportDraft","z"],["ExportMultiTimeline","Q"]]){
  const notify=variables.find(v=>v.start>components[name].start&&v.end<components[name].end&&v.id.name===(name==="ExportDraft"?"Ce":"xe"));if(notify)add(notify.init.body.start,notify.init.body.end,source.slice(notify.init.body.start,notify.init.body.end).replace(/type:([A-Za-z_$][\w$]*)}/,"type:$1,grouping:true,duration:5000}"),"group repeated export notifications");
  const component=components[name],start=variables.find(v=>v.start>component.start&&v.end<component.end&&v.id.name===startName);
- add(start.init.body.start+1,start.init.body.start+1,'if(XYExport_blocked())return;','ignore duplicate export clicks '+name);
+ const activeGuard=name==="ExportDraft"?'if(x.value.running&&v.value!==null){f.value=true;return;}':'if(A.value.running&&_.value!==null){T.value=true;return;}';
+ add(start.init.body.start+1,start.init.body.start+1,activeGuard+'if(XYExport_blocked())return;','keep the existing task on repeated export clicks '+name);
  for(const call of calls){if(call.start<component.start||call.end>component.end)continue;const props=call.arguments[1];if(props?.type==='ObjectExpression'&&props.properties.some(p=>p.key?.name==='onClick'&&p.value?.name===startName)&&props.properties.some(p=>p.key?.name==='class'&&p.value?.value==='btn'))add(call.start,call.end,'XYExport_startButton(l,o,'+startName+','+JSON.stringify(name==='ExportDraft'?'批量导出视频':'批量导出多时间线')+')','disable native export button during preparation');}
+}
+
+// Progress must follow the acknowledged native task, including a task that
+// fails before its first poll. Epochs discard RPC responses from older starts.
+for(const name of ["ExportDraft","ExportMultiTimeline"]){
+ const component=components[name],multi=name==="ExportMultiTimeline";
+ const findVar=id=>variables.find(v=>v.start>component.start&&v.end<component.end&&v.id.name===id);
+ const setup=component.properties.find(p=>p.key?.name==="setup")?.value?.body;
+ if(!setup)throw Error("Missing export setup "+name);
+ function reconnectLabel(n){
+  if(!n||typeof n!=="object")return;
+  if(n.type==="ObjectExpression"&&["idle","exporting","failed"].every(key=>n.properties.some(p=>p.key?.name===key)))add(n.start+1,n.start+1,'reconnecting:"正在恢复进度连接",',"label progress reconnect state "+name);
+  for(const v of Object.values(n))if(Array.isArray(v))v.forEach(x=>x?.type&&reconnectLabel(x));else if(v?.type)reconnectLabel(v);
+ }
+ reconnectLabel(component);
+ add(setup.start+1,setup.start+1,"const xyProgress={epoch:0,ack:false,busy:false,errors:0,params:null,retryMs:500,nextAt:0,reported:false,idleSince:0};","track acknowledged export progress "+name);
+ const poll=findVar(multi?"j":"re"),stop=findVar(multi?"Fe":"te"),begin=findVar(multi?"J":"w"),start=findVar(multi?"Q":"z");
+ if(!poll||!stop||!begin||!start)throw Error("Missing export polling functions "+name);
+ const state=multi?"A":"x",awaiting=multi?"$":"D",pollName=multi?"j":"re",stopName=multi?"Fe":"te",enabled=multi?"x":"Vde",method=multi?"BatchExportMultiTimeline":"BatchExportDraft",params=multi?"ke":"ie";
+ const stopBody=source.slice(stop.init.body.start,stop.init.body.end);
+ add(stop.init.body.start,stop.init.body.end,"{xyProgress.epoch++;xyProgress.busy=false;"+stopBody.slice(1),"discard old progress responses "+name);
+ let beginBody=source.slice(begin.init.body.start,begin.init.body.end);
+ const beginMarker=stopName+"(),"+awaiting+".value=!0";
+ if(!beginBody.includes(beginMarker))throw Error("Missing progress start marker "+name);
+ beginBody=beginBody.replace(beginMarker,stopName+"(),xyProgress.ack=false,xyProgress.errors=0,xyProgress.retryMs=500,xyProgress.nextAt=0,xyProgress.reported=false,xyProgress.idleSince=0,"+awaiting+".value=!0");
+ add(begin.init.body.start,begin.init.body.end,beginBody,"reset progress acknowledgement "+name);
+ const pollBody=`{
+  if(!${enabled}||xyProgress.busy||Date.now()<xyProgress.nextAt)return;
+  const xyEpoch=xyProgress.epoch,xyBeforeAck=!xyProgress.ack,xyWasPreparing=XYExport_preparing;
+  xyProgress.busy=true;
+  try{
+   const xyState=await Hf();
+   if(xyEpoch!==xyProgress.epoch)return;
+   if(!xyState||typeof xyState!=="object"||typeof xyState.phase!=="string")throw Error("后台返回了无效的导出进度。");
+   xyProgress.errors=0;
+   const xyTerminal=["completed","failed","cancelled"].includes(xyState.phase);
+   if((xyBeforeAck||xyWasPreparing||!xyProgress.ack||XYExport_preparing)&&(xyTerminal||xyState.phase==="idle"))return;
+   if(xyProgress.ack&&xyState.phase==="idle"){
+    if(!xyProgress.idleSince)xyProgress.idleSince=Date.now();
+    const xyDelayed=Date.now()-xyProgress.idleSince>=10000;
+    const xyMessage=xyDelayed?"剪映尚未产生运行任务状态，正在重试读取；请勿重复启动。":"剪映尚未返回运行进度，正在等待…";
+    xyProgress.retryMs=xyDelayed?2000:500;
+    ${state}.value={...${state}.value,running:true,phase:xyDelayed?"reconnecting":"starting",message:xyMessage,error:xyDelayed?xyMessage:""};
+    if(xyDelayed&&!xyProgress.reported){xyProgress.reported=true;XYExport_stage="等待剪映运行状态";await XYExport_record(xyMessage,"${method}",xyProgress.params||d.value);}
+    return;
+   }
+   xyProgress.idleSince=0;xyProgress.retryMs=500;
+   if(xyProgress.reported){xyProgress.reported=false;XYExport_error=null;XYExport_emit();}
+   ${awaiting}.value=!xyProgress.ack;
+   ${state}.value=xyState;
+   if(xyTerminal){
+    ${stopName}();
+    if(xyState.phase==="failed"){XYExport_stage="执行剪映导出";await XYExport_record(xyState.error||xyState.message||"剪映导出失败。","${method}",xyProgress.params||d.value);}
+   }
+  }catch(xyError){
+   if(xyEpoch!==xyProgress.epoch)return;
+   if(++xyProgress.errors>=3){
+    const xyMessage="进度连接中断，正在重试；剪映可能仍在导出，请勿重复启动。";
+    const xyDetail=xyMessage+" 原因："+XYExport_text(xyError);
+    xyProgress.retryMs=2000;
+    ${state}.value={...${state}.value,running:true,phase:"reconnecting",message:xyMessage,error:xyDetail};
+    if(!xyProgress.reported){xyProgress.reported=true;XYExport_stage="读取导出进度";await XYExport_record(xyDetail,"${method}",xyProgress.params||d.value);}
+   }
+  }finally{if(xyEpoch===xyProgress.epoch){xyProgress.busy=false;xyProgress.nextAt=Date.now()+xyProgress.retryMs;}}
+ }`;
+ add(poll.init.body.start,poll.init.body.end,pollBody,"report terminal and polling failures "+name);
+ const startText=source.slice(start.init.body.start,start.init.body.end),callMarker="await "+(multi?"EA":"CA")+"("+params+")",callPos=startText.indexOf(callMarker);
+ if(callPos<0)throw Error("Missing native export start "+name);
+ add(start.init.body.start+callPos,start.init.body.start+callPos,"xyProgress.params="+params+",","capture export diagnostic parameters "+name);
+ const ackPos=startText.indexOf(multi?"je=!0":"$e=!0",callPos);
+ if(ackPos<0)throw Error("Missing export acknowledgement "+name);
+ const ackEnd=start.init.body.start+ackPos+(multi?"je=!0":"$e=!0").length;
+ add(ackEnd,ackEnd,",xyProgress.ack=true,"+awaiting+".value=false,xyProgress.epoch++,xyProgress.busy=false,xyProgress.nextAt=0,await "+pollName+"()","poll immediately after native acknowledgement "+name);
+ const notifyMarker=(multi?'xe("success",':'Ce("success",'),notifyPos=startText.indexOf(notifyMarker,ackPos);
+ if(notifyPos<0)throw Error("Missing export success notification "+name);
+ add(start.init.body.start+notifyPos,start.init.body.start+notifyPos,state+'.value.phase!=="failed"&&'+state+'.value.phase!=="cancelled"&&',"avoid success toast for already failed export "+name);
 }
 patches.sort((a,b)=>a.start-b.start||a.end-b.end);
 for(let i=1;i<patches.length;i++)if(patches[i].start<patches[i-1].end)throw Error('Overlapping patches '+JSON.stringify(patches.slice(i-1,i+1)));

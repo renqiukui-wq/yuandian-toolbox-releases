@@ -23,7 +23,7 @@ def main():
   for name in RESOURCES:
    if not (args.original_dir/'Resources'/name).is_file():parser.error('Missing supplied resource: '+name)
  stage=ROOT/'.build';work=stage/'work';work.mkdir(parents=True,exist_ok=True)
- for name in SOURCES+['draft_codec.c','build_codec.py','test_draft_codec.py','test_direct_export.cjs']:shutil.copy2(ROOT/name,work/name)
+ for name in SOURCES+['draft_codec.c','build_codec.py','test_draft_codec.py','test_direct_export.cjs','test_export_component.cjs','test_draft_export_component.cjs','ExportEnvironment.cs','ExportEnvironmentSmoke.cs','test_default_export_path.cjs']:shutil.copy2(ROOT/name,work/name)
  (work/'acorn').mkdir(exist_ok=True)
  shutil.copy2(ROOT/'acorn.js',work/'acorn/acorn.js');shutil.copy2(ROOT/'LICENSE-ACORN',work/'acorn/LICENSE')
  payload=work/'build_inputs/runtime_payload';payload.mkdir(parents=True,exist_ok=True)
@@ -35,14 +35,17 @@ def main():
  resources=payload/'Resources/Core/Resources';resources.mkdir(parents=True,exist_ok=True)
  run([sys.executable,'work/build_codec.py','--zig',args.zig,'--output',str(resources/'jydraft_bridge.dll')])
  run([sys.executable,'work/test_draft_codec.py',str(resources/'jydraft_bridge.dll')])
- run([node,'work/test_direct_export.cjs']);run([node,'work/test_export_start.cjs']);run([node,'work/test_export_policies.cjs']);run([node,'work/test_cover_frontend.cjs']);run([node,'work/test_install_frontend.cjs'])
+ run([node,'work/test_direct_export.cjs']);run([node,'work/test_export_start.cjs']);run([node,'work/test_export_policies.cjs']);run([node,'work/test_cover_frontend.cjs']);run([node,'work/test_install_frontend.cjs']);run([node,'work/test_default_export_path.cjs'])
  run([sys.executable,'work/build_runtime.py'])
  csc=str(Path(os.environ.get('WINDIR','C:/Windows'))/'Microsoft.NET/Framework64/v4.0.30319/csc.exe')
+ environmentprobe=stage/'ExportEnvironmentSmoke.exe'
+ run([csc,'/nologo','/codepage:65001','/target:exe','/platform:x64','/out:'+str(environmentprobe)]+[str(work/n) for n in ['ExportEnvironmentSmoke.cs','ExportEnvironment.cs']])
+ run([str(environmentprobe)])
  probe=stage/'PreviewSmoke.exe'
  run([csc,'/nologo','/codepage:65001','/target:exe','/platform:x64','/reference:System.Drawing.dll','/reference:System.Web.Extensions.dll','/out:'+str(probe)]+[str(work/n) for n in ['PreviewSmoke.cs','DraftPreview.cs','MaterialCollector.cs']])
  run([str(probe)])
  exportprobe=stage/'ExportSmoke.exe'
- run([csc,'/nologo','/codepage:65001','/target:exe','/platform:x64','/main:ExportSmoke','/reference:System.Drawing.dll','/reference:System.Windows.Forms.dll','/reference:System.Web.Extensions.dll','/out:'+str(exportprobe)]+[str(work/n) for n in ['ExportSmoke.cs','LocalLauncher.cs','SilenceProcessor.cs','MaterialCollector.cs','DraftPreview.cs','UpdateService.cs','UpdateInstaller.cs','ReleaseSettings.cs']])
+ run([csc,'/nologo','/codepage:65001','/target:exe','/platform:x64','/main:ExportSmoke','/reference:System.Drawing.dll','/reference:System.Windows.Forms.dll','/reference:System.Web.Extensions.dll','/out:'+str(exportprobe)]+[str(work/n) for n in ['ExportSmoke.cs','LocalLauncher.cs','ExportEnvironment.cs','SilenceProcessor.cs','MaterialCollector.cs','DraftPreview.cs','UpdateService.cs','UpdateInstaller.cs','ReleaseSettings.cs']])
  run([str(exportprobe)])
  if args.check:
   print('PASS: managed helper compiled; cover and update tests passed. Original editor integration was not built.');return
@@ -52,7 +55,7 @@ def main():
  extras=[p.name for p in resources.iterdir() if p.name not in expected]
  if extras:raise RuntimeError('Unexpected staging files; use a fresh checkout: '+repr(extras))
  for name in RESOURCES:shutil.copy2(args.original_dir/'Resources'/name,resources/name)
- run([sys.executable,'work/extract_assets.py']);run([node,'work/patch_frontend.cjs']);run([sys.executable,'work/build_binary.py']);run([sys.executable,'work/verify_build.py']);run([sys.executable,'work/build_single_file.py'])
+ run([sys.executable,'work/extract_assets.py']);run([node,'work/patch_frontend.cjs']);run([node,'work/test_export_component.cjs']);run([node,'work/test_draft_export_component.cjs']);run([sys.executable,'work/build_binary.py']);run([sys.executable,'work/verify_build.py']);run([sys.executable,'work/build_single_file.py'])
  package=stage/'outputs/元点剪辑批量工具箱.exe'
  run([str(package),'--verify-package',str(work/'package-verification.json')])
  if digest(original)!=ORIGINAL_SHA256:raise RuntimeError('Original input changed during build')
